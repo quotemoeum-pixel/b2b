@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react';
+import Head from 'next/head';
 import { HotTable } from '@handsontable/react';
 import { registerAllModules } from 'handsontable/registry';
 import 'handsontable/dist/handsontable.full.min.css';
@@ -150,6 +151,9 @@ export default function PackingList() {
   const [pendingInserts, setPendingInserts] = useState([]);
   const [pendingNormalUpdates, setPendingNormalUpdates] = useState([]);
   const [pendingConflictUpdates, setPendingConflictUpdates] = useState([]);
+
+  // 엑셀 다운로드 파일명
+  const [excelFileName, setExcelFileName] = useState('');
 
   // 숫자 변환 유틸
   const toNumber = (val) => val ? Number(String(val).replace(/,/g, '')) : 0;
@@ -665,7 +669,7 @@ export default function PackingList() {
     alert('저장이 취소되었습니다.');
   };
 
-  // gibon.xlsx 양식으로 엑셀 다운로드
+  // 패킹양식1.xlsx 템플릿 기반 엑셀 다운로드
   const handleExcelDownload = useCallback(async () => {
     const hot = hotRef.current?.hotInstance;
     if (!hot) return;
@@ -680,120 +684,49 @@ export default function PackingList() {
     }
 
     try {
+      // 템플릿 파일 불러오기
+      const response = await fetch('/패킹양식1.xlsx');
+      const templateBuffer = await response.arrayBuffer();
+
       const workbook = new ExcelJS.Workbook();
-      const sheet = workbook.addWorksheet('패킹리스트');
+      await workbook.xlsx.load(templateBuffer);
 
-      // 페이지 설정
-      sheet.pageSetup = {
-        paperSize: 9,
-        orientation: 'landscape',
-        fitToPage: true,
-        fitToWidth: 1,
-        fitToHeight: 0,
-      };
+      const sheet = workbook.getWorksheet('패킹리스트');
+      if (!sheet) {
+        alert('템플릿 파일에서 "패킹리스트" 시트를 찾을 수 없습니다.');
+        return;
+      }
 
-      // 열 너비 설정 (gibon.xlsx 기준 - A열(Date&Con.No) 제외)
-      sheet.columns = [
-        { width: 10 },  // A: 쉬핑넘버 (PALLET NO.)
-        { width: 15 },  // B: 상품코드
-        { width: 50 },  // C: 상품명
-        { width: 8 },   // D: 아웃박스 입수량
-        { width: 10 },  // E: 아웃박스수량
-        { width: 10 },  // F: 환산수량
-        { width: 10 },  // G: 박스 당 순 중량
-        { width: 10 },  // H: 박스 당 중량
-        { width: 10 },  // I: 총 박스 순 중량
-        { width: 10 },  // J: 총 박스 중량
-        { width: 8 },   // K: 장
-        { width: 8 },   // L: 폭
-        { width: 8 },   // M: 고
-        { width: 12 },  // N: 팔레트 총중량
-        { width: 10 },  // O: CBM
-        { width: 15 },  // P: 제조번호(LOT)
-        { width: 12 },  // Q: 유통기한
-      ];
+      // 6행부터 데이터 입력 (5행이 헤더)
+      // 템플릿 컬럼 순서: A:Date&Con.No, B:쉬핑넘버, C:상품코드, D:상품명, E:아웃박스입수량,
+      // F:아웃박스수량, G:환산수량, H:박스당순중량, I:박스당중량, J:총박스순중량, K:총박스중량,
+      // L:장, M:폭, N:고, O:팔레트총중량, P:CBM, Q:제조번호(LOT), R:유통기한
 
-      // 스타일 정의
-      const headerStyle = {
-        font: { bold: true, size: 10 },
-        alignment: { horizontal: 'center', vertical: 'middle', wrapText: true },
-        border: {
-          top: { style: 'thin' },
-          left: { style: 'thin' },
-          bottom: { style: 'thin' },
-          right: { style: 'thin' }
-        },
-        fill: {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FFE2EFDA' } // 연한 녹색
+      // 쉬핑넘버(pltNo) 기준 오름차순 정렬
+      const sortedData = [...validData].sort((a, b) => {
+        const pltA = String(a.pltNo || '').trim();
+        const pltB = String(b.pltNo || '').trim();
+        // 숫자로 변환 가능하면 숫자 비교, 아니면 문자열 비교
+        const numA = parseFloat(pltA);
+        const numB = parseFloat(pltB);
+        if (!isNaN(numA) && !isNaN(numB)) {
+          return numA - numB;
         }
-      };
-
-      const dataStyle = {
-        font: { size: 10 },
-        alignment: { horizontal: 'center', vertical: 'middle' },
-        border: {
-          top: { style: 'thin' },
-          left: { style: 'thin' },
-          bottom: { style: 'thin' },
-          right: { style: 'thin' }
-        }
-      };
-
-      // 1행: 영업 담당자 정보
-      sheet.addRow(['영업 담당자', '', '★기재 필요한 내용에 노란색 표시 후, 작성요청 必 (사전 미요청내용에 대해 패킹완료 후 OR 출고완료 후 기재 불가)']);
-      sheet.mergeCells('C1:Q1');
-
-      // 2행: 고객사 정보
-      sheet.addRow(['고객사(입고지)', '', '★파일명 [출고요청일(WMS 및 ERP 등록일자) + 고객사명(입고지명) + 패킹리스트] 통일 하여 요청 必']);
-      sheet.mergeCells('C2:Q2');
-
-      // 3행: 출고요청 일자
-      sheet.addRow(['출고요청 일자\n(=WMS & ERP 등록일자)', '', '★상품명(영문) 기재 필요 시. 영업담당자 기재하여 패킹리스트 작성요청 必 (태은 및 제조사에서 영문명 확인불가)']);
-      sheet.mergeCells('C3:Q3');
-
-      // 4행: PLT적재 박스수량 안내
-      sheet.addRow(['', '', '', '', '▼PLT적재 박스수량', '', '', '', '', '', '팔레트 (PLT 자체무게 = ____5____KG)']);
-      sheet.mergeCells('E4:J4');
-      sheet.mergeCells('K4:Q4');
-
-      // 5행: 헤더
-      const headers = [
-        '쉬핑넘버\n(PALLET NO.)',
-        '상품코드',
-        '상품명',
-        '아웃박스\n입수량\n(곽)',
-        '아웃박스수량\n(box)',
-        '환산수량\n(곽)',
-        '박스 당\n순 중량\n(kg)',
-        '박스 당\n중량\n(kg)',
-        '총 박스\n순 중량\n(kg)',
-        '총 박스\n중량\n(kg)',
-        '장\n(mm)',
-        '폭\n(mm)',
-        '고\n(mm)',
-        '팔레트\n총중량(KG)',
-        'CBM',
-        '제조번호(LOT)',
-        '유통기한'
-      ];
-      const headerRow = sheet.addRow(headers);
-      headerRow.height = 45;
-      headerRow.eachCell((cell) => {
-        cell.font = headerStyle.font;
-        cell.alignment = headerStyle.alignment;
-        cell.border = headerStyle.border;
-        cell.fill = headerStyle.fill;
+        return pltA.localeCompare(pltB, 'ko');
       });
 
-      // 데이터 행 추가
+      let currentRow = 6;
       let totalConvertedQty = 0;
       let totalOutboxQty = 0;
       let totalBoxWeight = 0;
       let totalNetBoxWeight = 0;
 
-      validData.forEach((row) => {
+      // 쉬핑넘버 병합을 위한 추적
+      const pltMergeRanges = []; // { pltNo, startRow, endRow }
+      let currentPltNo = null;
+      let pltStartRow = 6;
+
+      sortedData.forEach((row, index) => {
         const eaPerBox = toNumber(row.eaPerBox);
         const convertedQty = toNumber(row.convertedQty);
         const outboxQty = toNumber(row.outboxQty);
@@ -809,74 +742,116 @@ export default function PackingList() {
         const netWeightPerBox = weightPerBox > 0 ? Math.round((weightPerBox - 0.7) * 100) / 100 : '';
         const totalNetWeight = outboxQty && netWeightPerBox ? Math.round(outboxQty * netWeightPerBox * 100) / 100 : '';
 
-        const dataRow = sheet.addRow([
-          row.pltNo || '',                 // A: PALLET NO.
-          row.productCode || '',           // B: 상품코드
-          row.productName || '',           // C: 상품명
-          eaPerBox || '',                  // D: 아웃박스 입수량
-          outboxQty || '',                 // E: 아웃박스수량
-          convertedQty || '',              // F: 환산수량
-          netWeightPerBox || '',           // G: 박스 당 순 중량
-          weightPerBox || '',              // H: 박스 당 중량
-          totalNetWeight || '',            // I: 총 박스 순 중량
-          totalWeight || '',               // J: 총 박스 중량
-          palletLength || '',              // K: 장
-          palletWidth || '',               // L: 폭
-          palletHeight || '',              // M: 고
-          palletTotalWeight || '',         // N: 팔레트 총중량
-          palletCbm || '',                 // O: CBM
-          row.lotNo || '',                 // P: 제조번호(LOT)
-          row.expiryDate || ''             // Q: 유통기한
-        ]);
+        const pltNo = String(row.pltNo || '').trim();
 
-        dataRow.eachCell((cell, colNumber) => {
-          cell.font = dataStyle.font;
-          cell.alignment = dataStyle.alignment;
-          cell.border = dataStyle.border;
+        // 쉬핑넘버 병합 추적
+        if (pltNo !== currentPltNo) {
+          // 이전 그룹 저장
+          if (currentPltNo !== null && pltStartRow < currentRow) {
+            pltMergeRanges.push({ pltNo: currentPltNo, startRow: pltStartRow, endRow: currentRow - 1 });
+          }
+          currentPltNo = pltNo;
+          pltStartRow = currentRow;
+        }
 
-          // 숫자 컬럼 오른쪽 정렬
-          if ([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15].includes(colNumber)) {
-            cell.alignment = { horizontal: 'right', vertical: 'middle' };
-          }
-          // 상품명 왼쪽 정렬
-          if (colNumber === 3) {
-            cell.alignment = { horizontal: 'left', vertical: 'middle' };
-          }
-        });
+        // 각 셀에 값만 설정 (템플릿의 기존 서식 유지)
+        const rowData = sheet.getRow(currentRow);
+        rowData.getCell(1).value = '';                      // A: Date & Con. No.
+        rowData.getCell(2).value = pltNo;                   // B: 쉬핑넘버 (PALLET NO.)
+        rowData.getCell(3).value = row.productCode || '';   // C: 상품코드
+        rowData.getCell(4).value = row.productName || '';   // D: 상품명
+        rowData.getCell(5).value = eaPerBox || '';          // E: 아웃박스 입수량
+        rowData.getCell(6).value = outboxQty || '';         // F: 아웃박스수량
+        rowData.getCell(7).value = convertedQty || '';      // G: 환산수량
+        rowData.getCell(8).value = netWeightPerBox || '';   // H: 박스 당 순 중량
+        rowData.getCell(9).value = weightPerBox || '';      // I: 박스 당 중량
+        rowData.getCell(10).value = totalNetWeight || '';   // J: 총 박스 순 중량
+        rowData.getCell(11).value = totalWeight || '';      // K: 총 박스 중량
+        rowData.getCell(12).value = palletLength || '';     // L: 장
+        rowData.getCell(13).value = palletWidth || '';      // M: 폭
+        rowData.getCell(14).value = palletHeight || '';     // N: 고
+        rowData.getCell(15).value = palletTotalWeight || '';// O: 팔레트 총중량
+        rowData.getCell(16).value = palletCbm || '';        // P: CBM
+        rowData.getCell(17).value = row.lotNo || '';        // Q: 제조번호(LOT)
+        rowData.getCell(18).value = row.expiryDate || '';   // R: 유통기한
 
         // 합계 계산
         totalConvertedQty += convertedQty;
         totalOutboxQty += outboxQty;
         totalBoxWeight += totalWeight;
         totalNetBoxWeight += (typeof totalNetWeight === 'number' ? totalNetWeight : 0);
+
+        currentRow++;
       });
 
-      // 합계 행 추가
-      const totalRow = sheet.addRow([
-        '', '', '합계', '', totalOutboxQty.toFixed(2), totalConvertedQty, '', '', totalNetBoxWeight.toFixed(2), totalBoxWeight.toFixed(2),
-        '', '', '', '', '', '', ''
-      ]);
-      totalRow.eachCell((cell, colNumber) => {
-        cell.font = { bold: true, size: 10 };
-        cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        cell.border = dataStyle.border;
-        cell.fill = {
-          type: 'pattern',
-          pattern: 'solid',
-          fgColor: { argb: 'FFFFF2CC' } // 연한 노란색
-        };
-        if ([5, 6, 9, 10].includes(colNumber)) {
-          cell.alignment = { horizontal: 'right', vertical: 'middle' };
+      // 마지막 그룹 저장
+      if (currentPltNo !== null && pltStartRow < currentRow) {
+        pltMergeRanges.push({ pltNo: currentPltNo, startRow: pltStartRow, endRow: currentRow - 1 });
+      }
+
+      // 쉬핑넘버(B열) 및 장,폭,고,팔레트총중량,CBM 병합 처리
+      pltMergeRanges.forEach(range => {
+        if (range.startRow < range.endRow && range.pltNo) {
+          // B열(2번 컬럼) - 쉬핑넘버 병합
+          sheet.mergeCells(range.startRow, 2, range.endRow, 2);
+          sheet.getCell(range.startRow, 2).alignment = { horizontal: 'center', vertical: 'middle' };
+
+          // L열(12번 컬럼) - 장 병합
+          sheet.mergeCells(range.startRow, 12, range.endRow, 12);
+          sheet.getCell(range.startRow, 12).alignment = { horizontal: 'center', vertical: 'middle' };
+
+          // M열(13번 컬럼) - 폭 병합
+          sheet.mergeCells(range.startRow, 13, range.endRow, 13);
+          sheet.getCell(range.startRow, 13).alignment = { horizontal: 'center', vertical: 'middle' };
+
+          // N열(14번 컬럼) - 고 병합
+          sheet.mergeCells(range.startRow, 14, range.endRow, 14);
+          sheet.getCell(range.startRow, 14).alignment = { horizontal: 'center', vertical: 'middle' };
+
+          // O열(15번 컬럼) - 팔레트 총중량 병합
+          sheet.mergeCells(range.startRow, 15, range.endRow, 15);
+          sheet.getCell(range.startRow, 15).alignment = { horizontal: 'center', vertical: 'middle' };
+
+          // P열(16번 컬럼) - CBM 병합
+          sheet.mergeCells(range.startRow, 16, range.endRow, 16);
+          sheet.getCell(range.startRow, 16).alignment = { horizontal: 'center', vertical: 'middle' };
         }
       });
 
-      // 파일 다운로드
+      // 합계 행 추가 (값만 설정, 볼드 처리)
+      const totalRowData = sheet.getRow(currentRow);
+      totalRowData.getCell(1).value = '';
+      totalRowData.getCell(2).value = '';
+      totalRowData.getCell(3).value = '';
+      totalRowData.getCell(4).value = '';
+      totalRowData.getCell(5).value = '';
+      totalRowData.getCell(6).value = '';
+      totalRowData.getCell(7).value = totalConvertedQty;
+      totalRowData.getCell(7).font = { bold: true };  // 환산수량 합계 볼드
+      totalRowData.getCell(8).value = '';
+      totalRowData.getCell(9).value = '';
+      totalRowData.getCell(10).value = totalNetBoxWeight;
+      totalRowData.getCell(10).font = { bold: true }; // 총 박스 순 중량 합계 볼드
+      totalRowData.getCell(11).value = totalBoxWeight;
+      totalRowData.getCell(11).font = { bold: true }; // 총 박스 중량 합계 볼드
+      totalRowData.getCell(12).value = '';
+      totalRowData.getCell(13).value = '';
+      totalRowData.getCell(14).value = '';
+      totalRowData.getCell(15).value = '';
+      totalRowData.getCell(16).value = '';
+      totalRowData.getCell(17).value = '';
+      totalRowData.getCell(18).value = '';
+
+      // 파일 다운로드 (파일명 설정)
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `패킹리스트_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      const fileName = excelFileName.trim()
+        ? `${excelFileName.trim()}.xlsx`
+        : `패킹리스트_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.download = fileName;
       a.click();
       window.URL.revokeObjectURL(url);
 
@@ -889,6 +864,9 @@ export default function PackingList() {
   // 렌더링
   return (
     <AuthLayout>
+      <Head>
+        <title>패킹리스트</title>
+      </Head>
     <div className="p-4">
       <div className="flex flex-col mb-2">
         <div className="flex items-center">
@@ -918,8 +896,15 @@ export default function PackingList() {
             </div>
           </div>
 
-          {/* 저장/다운로드 버튼을 오른쪽에 배치 */}
-          <div className="w-[280px] flex justify-end space-x-2">
+          {/* 파일명 입력 + 저장/다운로드 버튼을 오른쪽에 배치 */}
+          <div className="flex items-center space-x-2">
+            <input
+              type="text"
+              value={excelFileName}
+              onChange={(e) => setExcelFileName(e.target.value)}
+              placeholder="파일명 (미입력시 자동생성)"
+              className="px-2 py-1.5 border border-gray-300 rounded text-sm w-[180px]"
+            />
             <button
               onClick={handleExcelDownload}
               className="px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm whitespace-nowrap"

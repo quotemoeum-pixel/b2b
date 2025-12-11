@@ -30,8 +30,61 @@ export default function Home() {
   // 새로운 옵션들
   const [combineSheets, setCombineSheets] = useState(false); // 시트 통합 여부
   const [sortByLocation, setSortByLocation] = useState(false); // 로케이션 정렬 여부
+  const [smartSort, setSmartSort] = useState(false); // 스마트 정렬 여부
   const [manualClientName, setManualClientName] = useState(''); // 수동 업체명 입력
   const [extractedClientName, setExtractedClientName] = useState(''); // 자동 추출된 업체명
+
+  // 스마트 정렬 규칙 (상품명 키워드 그룹)
+  // 더 이펙트, 비 네이처는 동일한 크기이므로 같은 그룹으로 묶음
+  const smartSortRules = [
+    { keywords: ['더 이펙트', '더이펙트', 'THE EFFECT', 'the effect', '비 네이처', '비네이처', 'B NATURE', 'b nature', 'BE NATURE', 'be nature'], group: '01_더이펙트_비네이처' },
+    { keywords: ['500ml', '500ML', '500 ml', '500 ML'], group: '02_500ML' },
+    { keywords: ['1000ml', '1000ML', '1000 ml', '1000 ML'], group: '03_1000ML' },
+  ];
+
+  // 상품명에서 그룹 찾기
+  const getSmartSortGroup = (productName) => {
+    if (!productName) return 'zzz_기타'; // 기타는 맨 뒤로
+    const name = productName.toString();
+    for (const rule of smartSortRules) {
+      for (const keyword of rule.keywords) {
+        if (name.includes(keyword)) {
+          return rule.group;
+        }
+      }
+    }
+    return 'zzz_기타';
+  };
+
+  // 스마트 정렬 함수 (그룹 내 다중로케이션 정렬)
+  const applySmartSort = (rows, productCodeIndex, productNameIndex, locationIndex) => {
+    console.log('스마트 정렬 시작 - locationIndex:', locationIndex);
+
+    // 각 행에 그룹 정보 추가
+    const rowsWithGroup = rows.map((row, idx) => {
+      const location = locationIndex !== undefined ? (row[locationIndex] || '').toString() : '';
+      console.log(`행 ${idx}: 로케이션=${location}, 상품명=${row[productNameIndex]}`);
+      return {
+        row,
+        group: getSmartSortGroup(row[productNameIndex]),
+        productCode: (row[productCodeIndex] || '').toString(),
+        location: location
+      };
+    });
+
+    // 정렬: 1순위 그룹명, 2순위 다중로케이션
+    rowsWithGroup.sort((a, b) => {
+      // 그룹 비교
+      const groupCompare = a.group.localeCompare(b.group);
+      if (groupCompare !== 0) return groupCompare;
+
+      // 같은 그룹 내에서 다중로케이션 순
+      return a.location.localeCompare(b.location);
+    });
+
+    console.log('정렬 후:', rowsWithGroup.map(item => ({ group: item.group, location: item.location })));
+    return rowsWithGroup.map(item => item.row);
+  };
 
   // 날짜 선택 시 자동으로 datePrefix 업데이트
   useEffect(() => {
@@ -133,7 +186,7 @@ export default function Home() {
         console.log(`파일 데이터 (${file.name}):`, data);
 
         // 데이터 처리 및 거래처명 추출 (정렬 옵션 전달)
-        const processResult = processData(data, datePrefix, sortByLocation);
+        const processResult = processData(data, datePrefix, sortByLocation, smartSort);
         console.log(`처리된 데이터 (${file.name}):`, processResult);
 
         // 거래처명 설정 (첫 번째 파일의 거래처명 사용)
@@ -253,7 +306,7 @@ export default function Home() {
     });
   };
 
-  const processData = (data, datePrefix, shouldSortByLocation = false) => {
+  const processData = (data, datePrefix, shouldSortByLocation = false, shouldSmartSort = false) => {
     try {
       if (!data || !Array.isArray(data) || data.length < 2) {
         throw new Error('파일 형식이 올바르지 않습니다. 최소 2행이 필요합니다.');
@@ -364,6 +417,43 @@ export default function Home() {
           sortedData = [...headerAndAbove, ...validRows, totalRow];
         } else {
           sortedData = [...headerAndAbove, ...validRows];
+        }
+      }
+
+      // 스마트 정렬 적용 (상품명 키워드 그룹화 + 같은 상품코드 연속 배치 + 다중로케이션 정렬)
+      if (shouldSmartSort) {
+        const headerAndAbove = sortedData.slice(0, headerRow + 1);
+        const dataRows = sortedData.slice(headerRow + 1);
+
+        // 합계 행 분리
+        const productCodeIndex = headerIndexMap['상품코드'];
+        const productNameIndex = headerIndexMap['상품명'];
+
+        const totalRowIndex = dataRows.findIndex(row => {
+          if (!row || !Array.isArray(row)) return false;
+          if (row[0] && row[0].toString().trim() === '합계') return true;
+          const hasNoProductCode = !row[productCodeIndex] || row[productCodeIndex].toString().trim() === '';
+          const hasQuantity = row[normalQuantityIndex] && parseFloat(row[normalQuantityIndex]) > 0;
+          if (hasNoProductCode && hasQuantity) return true;
+          return false;
+        });
+
+        let totalRow = null;
+        let rowsToSort = dataRows;
+
+        if (totalRowIndex !== -1) {
+          totalRow = dataRows[totalRowIndex];
+          rowsToSort = dataRows.filter((_, idx) => idx !== totalRowIndex);
+        }
+
+        // 빈 행 제외 후 스마트 정렬 적용 (다중로케이션 인덱스 전달)
+        const validRows = rowsToSort.filter(row => row && Array.isArray(row) && row.some(cell => cell));
+        const smartSortedRows = applySmartSort(validRows, productCodeIndex, productNameIndex, locationIndex);
+
+        if (totalRow) {
+          sortedData = [...headerAndAbove, ...smartSortedRows, totalRow];
+        } else {
+          sortedData = [...headerAndAbove, ...smartSortedRows];
         }
       }
 
@@ -865,6 +955,180 @@ export default function Home() {
     }
   };
 
+  // 검수지 시트 생성 함수 (피킹지에서 다중로케이션 제외, 상품코드+유통기한+LOT 동일 시 수량 합산)
+  const createInspectionSheet = (workbook, processedFiles, datePrefix, clientName) => {
+    try {
+      const inspectionSheet = workbook.addWorksheet('검수지');
+
+      // A4 가로 방향 페이지 설정
+      inspectionSheet.pageSetup = {
+        paperSize: 9,
+        orientation: 'landscape',
+        fitToPage: true,
+        fitToWidth: 1,
+        fitToHeight: 0,
+      };
+
+      inspectionSheet.headerFooter = {
+        oddFooter: '&C&P/&N'
+      };
+
+      // 제목 행 추가
+      const titleRow = inspectionSheet.addRow([`${datePrefix} ${clientName} 검수지`]);
+      titleRow.font = { size: 16, bold: true };
+      titleRow.height = 30;
+
+      // 헤더 (다중로케이션 제외)
+      const headers = ['상품코드', '상품명', '유통기한', 'LOT', '정상수량'];
+      const headerRow = inspectionSheet.addRow(headers);
+      headerRow.eachCell((cell) => {
+        cell.font = { bold: true };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFE6E6E6' }
+        };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      });
+
+      // 모든 파일의 데이터를 합쳐서 상품코드+유통기한+LOT 기준으로 그룹화
+      const groupedData = new Map();
+
+      processedFiles.forEach(processedFile => {
+        const data = processedFile.data;
+        if (!data || data.length < 3) return; // 제목행, 헤더행, 데이터행 필요
+
+        // 헤더 인덱스 찾기
+        const fileHeaders = data[1];
+        const productCodeIdx = fileHeaders.findIndex(h => h === '상품코드');
+        const productNameIdx = fileHeaders.findIndex(h => h === '상품명');
+        const expiryIdx = fileHeaders.findIndex(h => h === '유통기한');
+        const lotIdx = fileHeaders.findIndex(h => h === 'LOT');
+        const quantityIdx = fileHeaders.findIndex(h => h === '정상수량');
+
+        // 데이터 행 처리 (인덱스 2부터)
+        for (let i = 2; i < data.length; i++) {
+          const row = data[i];
+          if (!row || row.every(cell => !cell)) continue;
+
+          const productCode = productCodeIdx !== -1 ? (row[productCodeIdx] || '') : '';
+          const productName = productNameIdx !== -1 ? (row[productNameIdx] || '') : '';
+          const expiryDate = expiryIdx !== -1 ? (row[expiryIdx] || '') : '';
+          const lot = lotIdx !== -1 ? (row[lotIdx] || '') : '';
+          const quantity = quantityIdx !== -1 ? (parseFloat(row[quantityIdx]) || 0) : 0;
+
+          // 빈 상품코드는 건너뛰기 (합계 행 등)
+          if (!productCode) continue;
+
+          // 키: 상품코드 + 유통기한 + LOT
+          const key = `${productCode}|||${expiryDate}|||${lot}`;
+
+          if (groupedData.has(key)) {
+            const existing = groupedData.get(key);
+            existing.quantity += quantity;
+          } else {
+            groupedData.set(key, {
+              productCode,
+              productName,
+              expiryDate,
+              lot,
+              quantity
+            });
+          }
+        }
+      });
+
+      // 상품코드 기준으로 정렬
+      const sortedData = Array.from(groupedData.values()).sort((a, b) => {
+        return a.productCode.localeCompare(b.productCode);
+      });
+
+      // 총 수량 계산
+      let totalQuantity = 0;
+
+      // 데이터 행 추가
+      sortedData.forEach(item => {
+        const rowData = inspectionSheet.addRow([
+          item.productCode,
+          item.productName,
+          item.expiryDate,
+          item.lot,
+          item.quantity
+        ]);
+
+        totalQuantity += item.quantity;
+
+        // 수량 열에 천단위 구분자
+        const quantityCell = rowData.getCell(5);
+        if (typeof item.quantity === 'number') {
+          quantityCell.numFmt = '#,##0';
+        }
+
+        // 유통기한 하이라이트 (2027년 미만)
+        const expiryCell = rowData.getCell(3);
+        const expiryStr = String(item.expiryDate);
+        const year = parseInt(expiryStr.substring(0, 4));
+        if (!isNaN(year) && year < 2027) {
+          expiryCell.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFFFFF00' }
+          };
+        }
+
+        rowData.eachCell((cell) => {
+          cell.border = {
+            top: { style: 'thin' },
+            left: { style: 'thin' },
+            bottom: { style: 'thin' },
+            right: { style: 'thin' }
+          };
+        });
+      });
+
+      // 합계 행 추가
+      const totalRow = inspectionSheet.addRow(['', '합계', '', '', totalQuantity]);
+      totalRow.eachCell((cell, colNumber) => {
+        cell.font = { bold: true };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FFE6E6E6' }
+        };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+        if (colNumber === 5) {
+          cell.numFmt = '#,##0';
+        }
+      });
+
+      // 열 너비 조정
+      inspectionSheet.getColumn(1).width = 15; // 상품코드
+      inspectionSheet.getColumn(2).width = 65; // 상품명
+      inspectionSheet.getColumn(3).width = 12; // 유통기한
+      inspectionSheet.getColumn(4).width = 12; // LOT
+      inspectionSheet.getColumn(5).width = 12; // 정상수량
+
+      return inspectionSheet;
+    } catch (error) {
+      console.error('Error creating inspection sheet:', error);
+      const errorSheet = workbook.addWorksheet('검수지');
+      errorSheet.addRow(['오류가 발생했습니다']);
+      errorSheet.addRow([error.message]);
+      return errorSheet;
+    }
+  };
+
   // 여러 시트가 있는 엑셀 파일 다운로드 함수
   const downloadMultiSheetExcel = async (
     processedFiles,
@@ -1315,7 +1579,10 @@ export default function Home() {
       
       // 거래명세서 시트 생성 함수 호출
       createTransactionStatementSheet(workbook, allProductsForStatement, datePrefix, clientName);
-      
+
+      // 검수지 시트 생성 (피킹지에서 다중로케이션 제외, 상품코드+유통기한+LOT 동일 시 수량 합산)
+      createInspectionSheet(workbook, processedFiles, datePrefix, clientName);
+
       // 파일 저장 (브라우저에서 다운로드)
       const buffer = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
@@ -1487,6 +1754,23 @@ export default function Home() {
                       </span>
                       <p className="text-xs text-gray-600">
                         각 전표의 데이터를 로케이션 기준으로 오름차순 정렬
+                      </p>
+                    </div>
+                  </label>
+
+                  <label className="flex items-center gap-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={smartSort}
+                      onChange={(e) => setSmartSort(e.target.checked)}
+                      className="w-4 h-4 text-green-600 border-gray-300 rounded focus:ring-green-500"
+                    />
+                    <div>
+                      <span className="text-sm font-medium text-gray-800">
+                        스마트 정렬
+                      </span>
+                      <p className="text-xs text-gray-600">
+                        상품명 키워드(500ml, 마스크 등)로 그룹화 + 같은 상품코드 연속 배치
                       </p>
                     </div>
                   </label>

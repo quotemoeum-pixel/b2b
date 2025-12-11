@@ -1,5 +1,7 @@
 import { useState } from 'react';
+import Head from 'next/head';
 import * as XLSX from 'xlsx';
+import AuthLayout from '@/components/AuthLayout';
 
 export default function Extract() {
   // 상태 변수들
@@ -162,6 +164,10 @@ export default function Extract() {
   };
 
   return (
+    <AuthLayout>
+      <Head>
+        <title>B2C2</title>
+      </Head>
     <div className="container mx-auto p-4">
       <h1 className="text-2xl font-bold mb-4">엑셀 데이터 추출</h1>
       
@@ -328,5 +334,6 @@ export default function Extract() {
         </div>
       )}
     </div>
+    </AuthLayout>
   );
 }

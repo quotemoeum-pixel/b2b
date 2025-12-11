@@ -11,6 +11,7 @@ const menuGroups = [
     items: [
       { href: '/b2b', label: 'B2B택배' },
       { href: '/warehouse', label: '창고이동' },
+      { href: '/offbeauty', label: '오프뷰티' },
     ]
   },
   {
@@ -18,7 +19,7 @@ const menuGroups = [
     items: [
       { href: '/g', label: '피킹/패킹 생성' },
       { href: '/pl', label: '패킹리스트' },
-      { href: '/hap', label: '피킹리스트' },
+      { href: '/hap', label: '선패킹' },
     ]
   },
   {
@@ -26,7 +27,11 @@ const menuGroups = [
     items: [
       { href: '/box-update', label: 'EA/BOX 관리' },
       { href: '/weight-check', label: '무게조회' },
-      { href: '/un', label: '롯데운송장' },
+      { href: '/find', label: '재고찾기' },
+      { href: '/b2c2', label: 'B2C2' },
+      { href: '/un', label: '송장' },
+      { href: '/onebok', label: '재고배정' },
+      { href: '/exp', label: '유통기한경과' },
     ]
   }
 ];
@@ -35,13 +40,18 @@ const menuGroups = [
 const pageTitles = {
   '/b2b': 'B2B택배',
   '/warehouse': '창고이동',
+  '/offbeauty': '오프뷰티',
   '/box-update': 'EA/BOX 관리',
   '/pl': '패킹리스트',
   '/g': '피킹/패킹 생성',
-  '/hap': '피킹리스트',
+  '/hap': '선패킹',
   '/weight-check': '무게조회',
-  '/un': '롯데운송장',
+  '/find': '재고찾기',
+  '/b2c2': 'B2C2',
+  '/un': '송장',
   '/new': '재고확인',
+  '/onebok': '재고배정',
+  '/exp': '유통기한경과',
 };
 
 function DropdownMenu({ label, items, currentPath }) {
@@ -115,7 +125,7 @@ export default function Navbar() {
       <div className="max-w-full mx-auto flex justify-between items-center">
         {/* 왼쪽: 로고 + 현재 페이지 제목 */}
         <div className="flex items-center">
-          <Link href="/b2b" className="text-lg font-bold text-gray-800 mr-4">
+          <Link href="/" className="text-lg font-bold text-gray-800 mr-4">
             HD
           </Link>
           {pageTitle && (

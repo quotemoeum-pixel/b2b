@@ -1,4 +1,5 @@
 import React, { useState, useCallback, useMemo, useRef } from 'react';
+import Head from 'next/head';
 import { HotTable } from '@handsontable/react';
 import { registerAllModules } from 'handsontable/registry';
 import 'handsontable/dist/handsontable.full.min.css';
@@ -1308,6 +1309,9 @@ export default function PickingList() {
   
   return (
     <AuthLayout>
+      <Head>
+        <title>선패킹</title>
+      </Head>
     <div className="p-6 max-w-full relative z-[1]">
       <h1 className="text-2xl font-bold mb-6">피킹리스트 관리</h1>
 

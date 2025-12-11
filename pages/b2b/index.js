@@ -14,6 +14,7 @@ export default function B2BDelivery() {
   const [note, setNote] = useState(''); // 참고사항 추가
   const [isDutyFree, setIsDutyFree] = useState(false); // 면세점 체크박스
   const [files, setFiles] = useState([]); // 다중 파일 배열로 변경
+  const [productMergeMode, setProductMergeMode] = useState(false); // 상품별 통합 모드
 
   // 날짜를 m/d 형식으로 변환하는 함수
   const formatDate = (date) => {
@@ -138,7 +139,7 @@ export default function B2BDelivery() {
 
   const processFiles = async (e) => {
     e.preventDefault();
-    
+
     if (!files.length) {
       setError('파일을 선택해주세요.');
       return;
@@ -152,63 +153,16 @@ export default function B2BDelivery() {
     setProcessing(true);
     setError('');
     setSuccess(false);
-    
+
     try {
-      // 파일 처리 결과를 담을 배열
-      const processedFilesData = [];
-      
-      for (const file of files) {
-        // 파일 읽기
-        const data = await readExcelFile(file);
-        console.log(`파일 데이터 (${file.name}):`, data);
-        
-        // 데이터 처리 및 거래처명 추출
-        const result = processData(data);
-        console.log('처리된 데이터:', result.processedData);
-        console.log('거래처명:', result.clientName);
-        
-        // 거래처명에서 "주식회사" 제거
-        const cleanedClientName = removeCompanyPrefix(result.clientName);
-        console.log('정리된 거래처명:', cleanedClientName);
-        
-        // Supabase에서 박스 수 계산
-        let boxCalculation = {
-          totalQuantity: 0,
-          totalBoxes: 0,
-          calculationDetails: []
-        };
-        
-        if (result.productCodes && result.productCodes.length > 0) {
-          boxCalculation = await calculateBoxes(
-            result.productCodes,
-            result.productNames || [],
-            result.normalQuantities || []
-          );
-        }
-
-        // 박스 타입 열을 processedData에 추가
-        const processedDataWithBoxType = addBoxTypeColumn(result.processedData, boxCalculation);
-
-        // 처리된 파일 정보 추가
-        processedFilesData.push({
-          fileName: file.name,
-          originalData: data,
-          processedData: processedDataWithBoxType,
-          originalClientName: result.clientName,
-          clientName: cleanedClientName,
-          boxCalculation,
-          boxCount: boxCalculation.totalBoxes.toString()
-        });
+      // 상품별 통합 모드인 경우
+      if (productMergeMode) {
+        await processFilesProductMergeMode();
+      } else {
+        // 기존 모드
+        await processFilesNormalMode();
       }
-      
-      // 모든 파일 처리 완료 후 상태 업데이트
-      setProcessedFiles(processedFilesData);
-      
-      // 첫 번째 파일의 거래처명으로 전체 거래처명 설정 (이후 수정 가능)
-      if (processedFilesData.length > 0 && processedFilesData[0].clientName) {
-        setClientName(processedFilesData[0].clientName);
-      }
-      
+
       setSuccess(true);
     } catch (err) {
       console.error('Error processing files:', err);
@@ -216,6 +170,201 @@ export default function B2BDelivery() {
     } finally {
       setProcessing(false);
     }
+  };
+
+  // 기존 파일별 처리 모드
+  const processFilesNormalMode = async () => {
+    // 파일 처리 결과를 담을 배열
+    const processedFilesData = [];
+
+    for (const file of files) {
+      // 파일 읽기
+      const data = await readExcelFile(file);
+      console.log(`파일 데이터 (${file.name}):`, data);
+
+      // 데이터 처리 및 거래처명 추출
+      const result = processData(data);
+      console.log('처리된 데이터:', result.processedData);
+      console.log('거래처명:', result.clientName);
+
+      // 거래처명에서 "주식회사" 제거
+      const cleanedClientName = removeCompanyPrefix(result.clientName);
+      console.log('정리된 거래처명:', cleanedClientName);
+
+      // Supabase에서 박스 수 계산
+      let boxCalculation = {
+        totalQuantity: 0,
+        totalBoxes: 0,
+        calculationDetails: []
+      };
+
+      if (result.productCodes && result.productCodes.length > 0) {
+        boxCalculation = await calculateBoxes(
+          result.productCodes,
+          result.productNames || [],
+          result.normalQuantities || []
+        );
+      }
+
+      // 박스 타입 열을 processedData에 추가
+      const processedDataWithBoxType = addBoxTypeColumn(result.processedData, boxCalculation);
+
+      // 처리된 파일 정보 추가
+      processedFilesData.push({
+        fileName: file.name,
+        originalData: data,
+        processedData: processedDataWithBoxType,
+        originalClientName: result.clientName,
+        clientName: cleanedClientName,
+        boxCalculation,
+        boxCount: boxCalculation.totalBoxes.toString()
+      });
+    }
+
+    // 모든 파일 처리 완료 후 상태 업데이트
+    setProcessedFiles(processedFilesData);
+
+    // 첫 번째 파일의 거래처명으로 전체 거래처명 설정 (이후 수정 가능)
+    if (processedFilesData.length > 0 && processedFilesData[0].clientName) {
+      setClientName(processedFilesData[0].clientName);
+    }
+  };
+
+  // 상품별 통합 모드 처리
+  const processFilesProductMergeMode = async () => {
+    // 모든 파일에서 데이터 수집
+    const allItems = []; // {productCode, productName, location, quantity, expiryDate, lot, clientName}
+    let firstClientName = '';
+
+    for (const file of files) {
+      const data = await readExcelFile(file);
+      const result = processData(data);
+
+      if (!firstClientName && result.clientName) {
+        firstClientName = removeCompanyPrefix(result.clientName);
+      }
+
+      // processedData에서 개별 항목 추출 (헤더: 상품코드, 상품명, 유통기한, LOT, 다중로케이션, 정상수량)
+      const headers = result.processedData[1] || [];
+      const productCodeIdx = headers.findIndex(h => h === '상품코드');
+      const productNameIdx = headers.findIndex(h => h === '상품명');
+      const expiryDateIdx = headers.findIndex(h => h === '유통기한');
+      const lotIdx = headers.findIndex(h => h === 'LOT');
+      const locationIdx = headers.findIndex(h => h === '다중로케이션');
+      const quantityIdx = headers.findIndex(h => h === '정상수량');
+
+      for (let i = 2; i < result.processedData.length; i++) {
+        const row = result.processedData[i];
+        if (!row || row.length === 0) continue;
+
+        const productCode = productCodeIdx !== -1 ? (row[productCodeIdx] || '').toString().trim() : '';
+        const productName = productNameIdx !== -1 ? (row[productNameIdx] || '').toString().trim() : '';
+        const location = locationIdx !== -1 ? (row[locationIdx] || '').toString().trim() : '';
+        const quantity = quantityIdx !== -1 ? (parseFloat(String(row[quantityIdx]).replace(/,/g, '')) || 0) : 0;
+        const expiryDate = expiryDateIdx !== -1 ? (row[expiryDateIdx] || '') : '';
+        const lot = lotIdx !== -1 ? (row[lotIdx] || '') : '';
+
+        if (productCode && quantity > 0) {
+          allItems.push({
+            productCode,
+            productName,
+            location,
+            quantity,
+            expiryDate,
+            lot,
+            fileName: file.name
+          });
+        }
+      }
+    }
+
+    // 상품코드+로케이션 기준으로 그룹화
+    const productLocationMap = new Map();
+
+    allItems.forEach(item => {
+      const key = `${item.productCode}|||${item.location}`;
+
+      if (!productLocationMap.has(key)) {
+        productLocationMap.set(key, {
+          productCode: item.productCode,
+          productName: item.productName,
+          location: item.location,
+          items: []
+        });
+      }
+
+      productLocationMap.get(key).items.push({
+        quantity: item.quantity,
+        expiryDate: item.expiryDate,
+        lot: item.lot,
+        fileName: item.fileName
+      });
+    });
+
+    // 그룹별로 시트 데이터 생성
+    const processedFilesData = [];
+    const sortedGroups = Array.from(productLocationMap.values())
+      .sort((a, b) => a.productCode.localeCompare(b.productCode, 'ko'));
+
+    // 모든 상품코드 수집 (박스 계산용)
+    const allProductCodes = sortedGroups.map(g => g.productCode);
+    const allProductNames = sortedGroups.map(g => g.productName);
+    const allQuantities = sortedGroups.map(g =>
+      g.items.reduce((sum, item) => sum + item.quantity, 0)
+    );
+
+    // 박스 계산
+    const boxCalculation = await calculateBoxes(allProductCodes, allProductNames, allQuantities);
+
+    for (const group of sortedGroups) {
+      const totalQuantity = group.items.reduce((sum, item) => sum + item.quantity, 0);
+
+      // 시트 데이터 생성
+      const sheetData = [];
+
+      // 제목 행
+      sheetData.push([`${datePrefix} ${firstClientName} 택배 - ${group.productCode}`]);
+
+      // 헤더 행
+      sheetData.push(['상품코드', '상품명', '유통기한', 'LOT', '다중로케이션', '정상수량', '파일']);
+
+      // 데이터 행 (각 파일별 수량)
+      group.items.forEach(item => {
+        sheetData.push([
+          group.productCode,
+          group.productName,
+          item.expiryDate || '',
+          item.lot || '',
+          group.location,
+          item.quantity,
+          item.fileName
+        ]);
+      });
+
+      // 합계 행
+      sheetData.push(['합계', '', '', '', '', totalQuantity, '']);
+
+      // 박스 계산 상세 찾기
+      const detail = boxCalculation.calculationDetails.find(d => d.productCode === group.productCode);
+
+      processedFilesData.push({
+        fileName: `${group.productCode} (${group.location || '위치없음'})`,
+        originalData: [],
+        processedData: sheetData,
+        originalClientName: firstClientName,
+        clientName: firstClientName,
+        boxCalculation: {
+          totalQuantity: totalQuantity,
+          totalBoxes: detail ? detail.boxCount : 0,
+          calculationDetails: detail ? [detail] : []
+        },
+        boxCount: detail ? detail.boxCount.toString() : '0',
+        isProductMergeMode: true
+      });
+    }
+
+    setProcessedFiles(processedFilesData);
+    setClientName(firstClientName);
   };
 
   // 무게에 따른 박스 타입 결정 함수
@@ -417,15 +566,25 @@ export default function B2BDelivery() {
     try {
       // 날짜 형식 변환 (m/d -> mmdd)
       let formattedDate = formatDateForFileName(datePrefix);
-      
-      // 파일명 생성 (mmdd거래처명택배.xlsx)
-      let fileName = `${formattedDate}${clientName || ''}_B2B택배.xlsx`;
-      
+
+      // 상품별 통합 모드 여부 확인
+      const isProductMerge = processedFiles.some(f => f.isProductMergeMode);
+
+      // 파일명 생성
+      let fileName;
+      if (isProductMerge) {
+        fileName = `${formattedDate}${clientName || ''}_B2B택배_상품별통합.xlsx`;
+      } else {
+        fileName = `${formattedDate}${clientName || ''}_B2B택배.xlsx`;
+      }
+
       // 파일명이 생성되지 않았거나 거래처명이 없는 경우 기본 파일명 사용
       if (!clientName || clientName.trim() === '') {
-        fileName = `${formattedDate}_처리된_물류데이터택배.xlsx`;
+        fileName = isProductMerge
+          ? `${formattedDate}_처리된_물류데이터택배_상품별통합.xlsx`
+          : `${formattedDate}_처리된_물류데이터택배.xlsx`;
       }
-      
+
       // 다운로드 (ExcelJS 사용) - 여러 시트를 포함한 하나의 엑셀 파일
       await downloadMultiSheetExcel(processedFiles, fileName, datePrefix, clientName, note);
       setSuccess(true);
@@ -789,7 +948,16 @@ export default function B2BDelivery() {
       // 각 파일별로 별도의 시트 생성
       for (let i = 0; i < processedFiles.length; i++) {
         const processedFile = processedFiles[i];
-        const sheetName = `피킹지 ${i + 1}`;
+        // 상품별 통합 모드일 때는 상품코드를 시트명으로 사용
+        let sheetName;
+        if (processedFile.isProductMergeMode) {
+          // 시트명에 사용할 수 없는 문자 제거 및 31자 제한
+          sheetName = processedFile.fileName
+            .replace(/[\\/*?:\[\]]/g, '')
+            .substring(0, 31);
+        } else {
+          sheetName = `피킹지 ${i + 1}`;
+        }
         const sheet = workbook.addWorksheet(sheetName);
         
         // A4 가로 방향 페이지 설정 추가
@@ -1101,7 +1269,7 @@ export default function B2BDelivery() {
                 className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                 rows={4}
               />
-              <div className="mt-2">
+              <div className="mt-2 space-y-2">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -1110,6 +1278,15 @@ export default function B2BDelivery() {
                     className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                   />
                   <span className="text-sm font-medium text-gray-700">면세점 (고정 참고사항 자동 추가)</span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={productMergeMode}
+                    onChange={(e) => setProductMergeMode(e.target.checked)}
+                    className="w-4 h-4 text-purple-600 border-gray-300 rounded focus:ring-purple-500"
+                  />
+                  <span className="text-sm font-medium text-gray-700">상품별 통합 모드 (동일 상품코드+로케이션 통합)</span>
                 </label>
               </div>
             </div>
@@ -1329,6 +1506,14 @@ export default function B2BDelivery() {
                 ⚠️ 27년 미만 유통기한: 웹페이지와 엑셀 파일 모두에서 노란색 배경으로 표시됩니다.
               </span>
             </p>
+            <div className="mt-4 p-3 bg-purple-50 rounded border border-purple-200">
+              <h3 className="text-sm font-semibold text-purple-700 mb-1">상품별 통합 모드</h3>
+              <p className="text-sm text-purple-600">
+                여러 엑셀 파일에서 동일한 상품코드+로케이션을 가진 항목들을 하나의 시트로 통합합니다.<br />
+                예: 10개 파일에 A상품이 각각 있다면, A상품 피킹지 1개 시트에 모든 수량이 표시됩니다.<br />
+                시트 수는 고유한 상품코드+로케이션 조합 개수만큼 생성됩니다.
+              </p>
+            </div>
           </div>
         </div>
       </main>

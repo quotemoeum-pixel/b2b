@@ -227,7 +227,7 @@ export default function WeightCheck() {
   return (
     <AuthLayout>
       <Head>
-        <title>무게 조회</title>
+        <title>무게조회</title>
       </Head>
       <main className="min-h-screen bg-gray-50 px-4">
         <div className="max-w-6xl mx-auto bg-white rounded-lg shadow-md p-6">

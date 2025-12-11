@@ -877,13 +877,54 @@ export default function WarehouseMovement() {
       }
 
       const selectedReq = allRequests.find(r => r.id === requestId);
+
+      // 1단계: 상품코드 → 유통기한 → LOT 순으로 정렬
+      const tempSorted = [...detailsData].sort((a, b) => {
+        const codeA = (a.product_code || '').toString();
+        const codeB = (b.product_code || '').toString();
+        if (codeA !== codeB) return codeA.localeCompare(codeB);
+
+        const expiryA = (a.expiry_date || '').toString();
+        const expiryB = (b.expiry_date || '').toString();
+        if (expiryA !== expiryB) return expiryA.localeCompare(expiryB);
+
+        const lotA = (a.lot || '').toString();
+        const lotB = (b.lot || '').toString();
+        return lotA.localeCompare(lotB);
+      });
+
+      // 2단계: 같은 로케이션끼리 그룹핑 (첫 등장 위치 기준)
+      const sortedDetails = [];
+      const locationFirstIndex = new Map();
+
+      tempSorted.forEach(item => {
+        const loc = (item.normal_location || '').trim();
+        if (!locationFirstIndex.has(loc)) {
+          locationFirstIndex.set(loc, sortedDetails.length);
+          sortedDetails.push(item);
+        } else {
+          const firstIdx = locationFirstIndex.get(loc);
+          let insertIdx = firstIdx + 1;
+          while (insertIdx < sortedDetails.length &&
+                 (sortedDetails[insertIdx].normal_location || '').trim() === loc) {
+            insertIdx++;
+          }
+          sortedDetails.splice(insertIdx, 0, item);
+          locationFirstIndex.forEach((idx, key) => {
+            if (idx >= insertIdx && key !== loc) {
+              locationFirstIndex.set(key, idx + 1);
+            }
+          });
+        }
+      });
+
       setSelectedRequest({
         request: selectedReq,
-        details: detailsData
+        details: sortedDetails
       });
 
       // 편집 가능한 데이터 초기화 (적치로케이션 추가)
-      const editableDetails = detailsData.map(item => ({
+      const editableDetails = sortedDetails.map(item => ({
         ...item,
         storage_location: '' // 입고 시 입력할 적치로케이션
       }));

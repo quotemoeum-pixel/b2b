@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import * as XLSX from 'xlsx';
+import Head from 'next/head';
+import AuthLayout from '@/components/AuthLayout';
 
 export default function Home() {
   const [inventoryMoveFile, setInventoryMoveFile] = useState(null);
@@ -131,28 +133,30 @@ export default function Home() {
     return outbounds;
   };
 
-  // 수량 배정 알고리즘 (수량 추적 추가)
-  const allocateInventory = (inventory, outbounds) => {
-    const results = [];
+  // 재고 맵 생성 함수 (여러 파일 처리 시 공유)
+  const createInventoryMap = (inventory) => {
     const inventoryMap = new Map();
-    const warnings = {
-      shortage: [],      // 재고 부족
-      surplus: [],       // 재고 남음
-      noInventory: []    // 재고 없음
-    };
-
-    // 재고를 바코드별로 그룹화
     inventory.forEach(item => {
       if (!inventoryMap.has(item.barcode)) {
         inventoryMap.set(item.barcode, []);
       }
       inventoryMap.get(item.barcode).push({ ...item, remainingQty: item.quantity });
     });
+    return inventoryMap;
+  };
+
+  // 수량 배정 알고리즘 (inventoryMap을 외부에서 전달받아 공유)
+  const allocateInventory = (inventoryMap, outbounds) => {
+    const results = [];
+    const warnings = {
+      shortage: [],      // 재고 부족
+      noInventory: []    // 재고 없음
+    };
 
     // 반출전표별로 재고 할당
     outbounds.forEach(outbound => {
       const inventoryList = inventoryMap.get(outbound.barcode);
-      
+
       if (!inventoryList || inventoryList.length === 0) {
         warnings.noInventory.push({
           barcode: outbound.barcode,
@@ -176,7 +180,7 @@ export default function Home() {
         if (inv.remainingQty <= 0) continue;
 
         const allocatedQty = Math.min(inv.remainingQty, remainingExpected);
-        
+
         results.push({
           barcode: outbound.barcode,
           erpSeq: outbound.erpSeq,
@@ -200,11 +204,16 @@ export default function Home() {
       }
     });
 
-    // 남은 재고 확인
+    return { results, warnings };
+  };
+
+  // 남은 재고 확인 함수 (모든 파일 처리 후 호출)
+  const checkRemainingInventory = (inventoryMap) => {
+    const surplus = [];
     inventoryMap.forEach((invList, barcode) => {
       const totalRemaining = invList.reduce((sum, inv) => sum + inv.remainingQty, 0);
       if (totalRemaining > 0) {
-        warnings.surplus.push({
+        surplus.push({
           barcode,
           surplusQty: totalRemaining,
           details: invList.filter(inv => inv.remainingQty > 0).map(inv => ({
@@ -216,8 +225,7 @@ export default function Home() {
         });
       }
     });
-
-    return { results, warnings };
+    return surplus;
   };
 
   // 모든 파일 한번에 처리
@@ -262,6 +270,9 @@ export default function Home() {
           noInventory: []
         };
 
+        // 재고 맵을 한 번만 생성하고 모든 파일에서 공유 (재고 차감 누적)
+        const inventoryMap = createInventoryMap(inventory);
+
         for (const file of outboundFiles) {
           const outboundData = await readExcelFile(file);
           const outbounds = parseOutboundFile(outboundData);
@@ -270,19 +281,22 @@ export default function Home() {
             throw new Error(`${file.name} 파일에서 유효한 데이터를 찾을 수 없습니다.`);
           }
 
-          // 각 파일마다 별도로 재고 배정
-          const { results, warnings } = allocateInventory(inventory, outbounds);
+          // 공유된 inventoryMap을 사용하여 재고 배정 (차감이 누적됨)
+          const { results, warnings } = allocateInventory(inventoryMap, outbounds);
 
           allStep2Results.push({
             fileName: file.name,
-            results: results
+            results: results,
+            totalQty: results.reduce((sum, r) => sum + r.normalQty, 0)  // 총수량 추가
           });
 
           // 경고 누적
           allWarnings.shortage.push(...warnings.shortage);
-          allWarnings.surplus.push(...warnings.surplus);
           allWarnings.noInventory.push(...warnings.noInventory);
         }
+
+        // 모든 파일 처리 후 남은 재고 확인
+        allWarnings.surplus = checkRemainingInventory(inventoryMap);
 
         setStep2Results(allStep2Results);
         setQuantityWarnings(allWarnings);
@@ -356,7 +370,11 @@ export default function Home() {
   };
 
   return (
-    <div className="max-w-7xl mx-auto p-8">
+    <AuthLayout>
+      <Head>
+        <title>재고 배정</title>
+      </Head>
+      <div className="max-w-7xl mx-auto p-8">
       {/* 헤더 */}
       <div className="mb-8">
         <h1 className="text-4xl font-bold text-gray-900 mb-2">재고 배정 시스템</h1>
@@ -617,7 +635,7 @@ export default function Home() {
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-xl font-bold text-green-900 flex items-center">
                   <span className="bg-green-600 text-white rounded-full w-8 h-8 flex items-center justify-center mr-3 text-sm">2</span>
-                  {fileResult.fileName} - 배정 결과 ({fileResult.results.length}건)
+                  {fileResult.fileName} - 배정 결과 ({fileResult.results.length}건, 총 {fileResult.totalQty || fileResult.results.reduce((sum, r) => sum + r.normalQty, 0)}개)
                 </h3>
                 <div className="space-x-2">
                   <button
@@ -673,6 +691,7 @@ export default function Home() {
           ))}
         </div>
       )}
-    </div>
+      </div>
+    </AuthLayout>
   );
 }
