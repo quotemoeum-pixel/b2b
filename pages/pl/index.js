@@ -827,13 +827,10 @@ export default function PackingList() {
       totalRowData.getCell(5).value = '';
       totalRowData.getCell(6).value = '';
       totalRowData.getCell(7).value = totalConvertedQty;
-      totalRowData.getCell(7).font = { bold: true };  // 환산수량 합계 볼드
       totalRowData.getCell(8).value = '';
       totalRowData.getCell(9).value = '';
       totalRowData.getCell(10).value = totalNetBoxWeight;
-      totalRowData.getCell(10).font = { bold: true }; // 총 박스 순 중량 합계 볼드
       totalRowData.getCell(11).value = totalBoxWeight;
-      totalRowData.getCell(11).font = { bold: true }; // 총 박스 중량 합계 볼드
       totalRowData.getCell(12).value = '';
       totalRowData.getCell(13).value = '';
       totalRowData.getCell(14).value = '';
