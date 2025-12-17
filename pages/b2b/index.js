@@ -221,12 +221,25 @@ export default function B2BDelivery() {
       });
     }
 
+    // 거래처명이 있는 파일에서 첫 번째 거래처명 찾기
+    const firstValidClientName = processedFilesData.find(f => f.clientName && f.clientName.trim() !== '')?.clientName || '';
+
+    // 거래처명이 없는 파일에 다른 파일의 거래처명 적용
+    if (firstValidClientName) {
+      processedFilesData.forEach(file => {
+        if (!file.clientName || file.clientName.trim() === '') {
+          file.clientName = firstValidClientName;
+          file.originalClientName = file.originalClientName || firstValidClientName;
+        }
+      });
+    }
+
     // 모든 파일 처리 완료 후 상태 업데이트
     setProcessedFiles(processedFilesData);
 
-    // 첫 번째 파일의 거래처명으로 전체 거래처명 설정 (이후 수정 가능)
-    if (processedFilesData.length > 0 && processedFilesData[0].clientName) {
-      setClientName(processedFilesData[0].clientName);
+    // 첫 번째 유효한 거래처명으로 전체 거래처명 설정 (이후 수정 가능)
+    if (firstValidClientName) {
+      setClientName(firstValidClientName);
     }
   };
 
@@ -731,7 +744,7 @@ export default function B2BDelivery() {
       
       // 찾을 컬럼 목록 (첫 번째 시트용)
       const columnsToFind = [
-        '상품코드', '상품명', '유통기한', 'lot', '정상수량', '다중로케이션'
+        '상품코드', '상품명', '유통기한', 'lot', '정상수량', '정상다중로케이션'
       ];
       
       // 거래처 열은 파일명과 1행을 위해 별도로 찾음
@@ -851,6 +864,8 @@ export default function B2BDelivery() {
         .filter(col => {
           // 대문자 LOT은 소문자 lot으로 headerIndexMap에서 찾아야 함
           if (col === 'LOT') return headerIndexMap['lot'] !== undefined;
+          // 다중로케이션은 정상다중로케이션으로 headerIndexMap에서 찾아야 함
+          if (col === '다중로케이션') return headerIndexMap['정상다중로케이션'] !== undefined;
           return headerIndexMap[col] !== undefined;
         });
       
@@ -872,7 +887,7 @@ export default function B2BDelivery() {
       
       // 데이터 행 수집 (헤더 다음 행부터)
       const rows = [];
-      const locationColumnIndex = headerIndexMap['다중로케이션'];
+      const locationColumnIndex = headerIndexMap['정상다중로케이션'];
       
       for (let i = headerRow + 1; i < data.length; i++) {
         const row = data[i];
@@ -886,8 +901,10 @@ export default function B2BDelivery() {
         }
 
         const newRow = newHeaders.map(col => {
-          // 대문자 LOT은 소문자 lot으로 headerIndexMap에서 찾아야 함
-          const colName = col === 'LOT' ? 'lot' : col;
+          // 대문자 LOT은 소문자 lot으로, 다중로케이션은 정상다중로케이션으로 headerIndexMap에서 찾아야 함
+          let colName = col;
+          if (col === 'LOT') colName = 'lot';
+          if (col === '다중로케이션') colName = '정상다중로케이션';
           const colIndex = headerIndexMap[colName];
           let value = (colIndex !== undefined && row[colIndex] !== undefined) ? row[colIndex] || '' : '';
 

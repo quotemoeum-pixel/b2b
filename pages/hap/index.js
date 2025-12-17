@@ -145,28 +145,34 @@ const LocationModal = ({ orderItem, locations, originalStockData, pickingHistory
   };
 
   const handleFillAll = (uniqueId) => {
-    const updatedList = [...modalPickingList];
-    const rowIndex = updatedList.findIndex(item => item.uniqueId === uniqueId);
-    
+    const hot = hotTableRef.current?.hotInstance;
+    if (!hot) return;
+
+    const rowIndex = modalPickingList.findIndex(item => item.uniqueId === uniqueId);
     if (rowIndex === -1) return;
-    
-    const currentItem = updatedList[rowIndex];
+
+    const currentItem = modalPickingList[rowIndex];
     const maxAvailable = parseInt(currentItem.availableStock, 10) || 0;
-    
-    const currentTotalPicked = updatedList.reduce((sum, item, idx) => 
+
+    const currentTotalPicked = modalPickingList.reduce((sum, item, idx) =>
       idx !== rowIndex ? sum + (parseInt(item.pickingQuantity, 10) || 0) : sum, 0
     );
-    
+
     const remaining = parseInt(orderItem.requestedQuantity, 10) - currentTotalPicked;
     const fillQuantity = Math.min(maxAvailable, remaining);
-    
+
     if (fillQuantity <= 0) {
       alert('배정 가능한 수량이 없습니다.');
       return;
     }
-    
-    updatedList[rowIndex].pickingQuantity = fillQuantity;
-    setModalPickingList(updatedList);
+
+    // 정렬 유지를 위해 원본 데이터 직접 변경 (React 상태 업데이트 없이)
+    modalPickingList[rowIndex].pickingQuantity = fillQuantity;
+
+    // Handsontable에서 정렬된 상태로 해당 셀만 업데이트
+    const visualRow = hot.toVisualRow(rowIndex);
+    const pickingColIndex = hot.propToCol('pickingQuantity');
+    hot.setDataAtCell(visualRow, pickingColIndex, fillQuantity, 'fillAll');
   };
 
   const handleResetAll = () => {
@@ -182,12 +188,19 @@ const LocationModal = ({ orderItem, locations, originalStockData, pickingHistory
   };
 
   const handleClearRow = (uniqueId) => {
-    const updatedList = modalPickingList.map(item => 
-      item.uniqueId === uniqueId 
-        ? { ...item, pickingQuantity: 0 }
-        : item
-    );
-    setModalPickingList(updatedList);
+    const hot = hotTableRef.current?.hotInstance;
+    if (!hot) return;
+
+    const rowIndex = modalPickingList.findIndex(item => item.uniqueId === uniqueId);
+    if (rowIndex === -1) return;
+
+    // 정렬 유지를 위해 원본 데이터 직접 변경 (React 상태 업데이트 없이)
+    modalPickingList[rowIndex].pickingQuantity = 0;
+
+    // Handsontable에서 정렬된 상태로 해당 셀만 업데이트
+    const visualRow = hot.toVisualRow(rowIndex);
+    const pickingColIndex = hot.propToCol('pickingQuantity');
+    hot.setDataAtCell(visualRow, pickingColIndex, 0, 'clearRow');
   };
 
   const handleSave = () => {
@@ -250,7 +263,12 @@ const LocationModal = ({ orderItem, locations, originalStockData, pickingHistory
         <div className="p-6 border-b flex-shrink-0">
           <div className="flex justify-between items-start mb-4">
             <h2 className="text-xl font-bold">
-              로케이션 선택 - {orderItem.productName} (주문번호: {orderItem.orderId})
+              로케이션 선택 - {orderItem.productCode} / {orderItem.productName} (주문번호: {orderItem.orderId})
+              {orderItem.minExpiryDate && (
+                <span className="ml-2 text-sm font-normal text-orange-600 bg-orange-100 px-2 py-1 rounded">
+                  유통기한 {orderItem.minExpiryDate} 이상
+                </span>
+              )}
             </h2>
             <button
               onClick={handleResetAll}
@@ -538,42 +556,66 @@ export default function PickingList() {
     const notFoundItems = [];
     
     lines.forEach(line => {
-      const matches = line.match(/([A-Z0-9-]+)\s*(?:,\s*)?(\d+(?:,\d{3})*|\d+)/);
+      // 상품코드 수량 유통기한(선택) 형식 파싱
+      // 예: ABCD 100 2025-01-01 또는 ABCD 100
+      const matches = line.match(/([A-Z0-9-]+)\s*(?:,\s*)?(\d+(?:,\d{3})*|\d+)(?:\s+(\d{4}-\d{2}-\d{2}))?/);
       if (!matches) return;
 
-      const [, productCode, quantityStr] = matches;
+      const [, productCode, quantityStr, minExpiryDate] = matches;
       const quantity = parseInt(quantityStr.replace(/,/g, ''), 10);
       const code = normalizeValue(productCode);
       const locations = excelData.get(code);
-      
+
       if (!locations) {
+        // 엑셀에 없는 상품도 피킹리스트에 추가 (추후 입고될 상품일 수 있음)
         notFoundItems.push({
           code: productCode,
           required: quantity
+        });
+        newPickingList.push({
+          orderId: orderCounter++,
+          productCode: code,
+          productName: '(미등록 상품)',
+          requestedQuantity: quantity,
+          pickedQuantity: 0,
+          minExpiryDate: minExpiryDate || null
         });
         return;
       }
 
       const productInfo = locations[0];
-      const totalStock = locations.reduce((sum, loc) => 
+
+      // 유통기한 필터가 있으면 해당 기한 이상인 재고만 계산
+      const filteredLocations = minExpiryDate
+        ? locations.filter(loc => {
+            const expiry = loc['유통기한'];
+            if (!expiry) return false;
+            // 날짜 비교 (문자열 비교로 YYYY-MM-DD 형식 비교 가능)
+            return String(expiry) >= minExpiryDate;
+          })
+        : locations;
+
+      const totalStock = filteredLocations.reduce((sum, loc) =>
         sum + parseInt(loc['가용재고'] || 0, 10), 0
       );
-      
+
       if (totalStock < quantity) {
         shortageItems.push({
           code: productCode,
           name: productInfo['상품명'],
           required: quantity,
-          available: totalStock
+          available: totalStock,
+          minExpiryDate: minExpiryDate || null
         });
       }
-      
+
       newPickingList.push({
         orderId: orderCounter++,
         productCode: code,
         productName: productInfo['상품명'],
         requestedQuantity: quantity,
-        pickedQuantity: 0
+        pickedQuantity: 0,
+        minExpiryDate: minExpiryDate || null
       });
     });
 
@@ -651,7 +693,8 @@ export default function PickingList() {
     workbook.creator = '피킹리스트 관리';
     workbook.created = new Date();
     
-    const filteredDisplayList = sortedDisplayList.filter(item => item.pickedQuantity > 0);
+    // 피킹수량 0인 항목도 포함 (미등록 상품 등 추후 입고될 상품)
+    const filteredDisplayList = sortedDisplayList;
     
     // 시트1: 피킹리스트
     const sheet1 = workbook.addWorksheet('피킹리스트');
@@ -1258,8 +1301,17 @@ export default function PickingList() {
     if (!currentRow.orderId) return;
     
     const order = pickingList.find(item => item.orderId === currentRow.orderId);
-    const locations = excelData.get(order.productCode);
-    
+    let locations = excelData.get(order.productCode);
+
+    // 유통기한 필터가 있으면 해당 기한 이상인 로케이션만 표시
+    if (locations && order.minExpiryDate) {
+      locations = locations.filter(loc => {
+        const expiry = loc['유통기한'];
+        if (!expiry) return false;
+        return String(expiry) >= order.minExpiryDate;
+      });
+    }
+
     if (locations && locations.length > 0) {
       setSelectedOrder(order);
       setModalLocations(locations);

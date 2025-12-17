@@ -320,7 +320,7 @@ export default function Home() {
 
       // 찾을 컬럼 목록 (첫 번째 시트용)
       const columnsToFind = [
-        '상품코드', '상품명', '유통기한', 'lot', '정상수량', '다중로케이션', '바코드' // 바코드 컬럼 추가
+        '상품코드', '상품명', '유통기한', 'lot', '정상수량', '정상다중로케이션', '바코드' // 바코드 컬럼 추가
       ];
 
       // 거래처 열은 파일명과 1행을 위해 별도로 찾음
@@ -357,7 +357,7 @@ export default function Home() {
 
       // 거래처 열의 인덱스 찾기
       const normalQuantityIndex = headerIndexMap['정상수량'];
-      const locationIndex = headerIndexMap['다중로케이션'];
+      const locationIndex = headerIndexMap['정상다중로케이션'];
 
       // 먼저 데이터를 한 번 순회해서 거래처 이름 가져오기
       if (clientColumnIndex !== -1) {
@@ -543,6 +543,8 @@ export default function Home() {
         .filter(col => {
           // 대문자 LOT은 소문자 lot으로 headerIndexMap에서 찾아야 함
           if (col === 'LOT') return headerIndexMap['lot'] !== undefined;
+          // 다중로케이션은 정상다중로케이션으로 매핑
+          if (col === '다중로케이션') return headerIndexMap['정상다중로케이션'] !== undefined;
           return headerIndexMap[col] !== undefined;
         });
       
@@ -574,7 +576,9 @@ export default function Home() {
 
         const newRow = newHeaders.map(col => {
           // 대문자 LOT은 소문자 lot으로 headerIndexMap에서 찾아야 함
-          const colName = col === 'LOT' ? 'lot' : col;
+          let colName = col === 'LOT' ? 'lot' : col;
+          // 다중로케이션은 정상다중로케이션으로 매핑
+          if (col === '다중로케이션') colName = '정상다중로케이션';
           const colIndex = headerIndexMap[colName];
           return (colIndex !== undefined && row[colIndex] !== undefined) ? row[colIndex] || '' : '';
         });
@@ -1642,9 +1646,6 @@ export default function Home() {
                     onChange={(e) => setSelectedDate(e.target.value)}
                     className="flex-1 px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
-                  <div className="px-4 py-2 bg-white border border-gray-300 rounded-md text-lg font-semibold text-blue-600 min-w-[80px] text-center">
-                    {datePrefix || '-'}
-                  </div>
                   <button
                     type="button"
                     onClick={() => {
@@ -1653,6 +1654,17 @@ export default function Home() {
                     className="px-3 py-2 bg-blue-600 text-white text-sm rounded-md hover:bg-blue-700 whitespace-nowrap"
                   >
                     오늘
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const tomorrow = new Date();
+                      tomorrow.setDate(tomorrow.getDate() + 1);
+                      setSelectedDate(tomorrow.toISOString().split('T')[0]);
+                    }}
+                    className="px-3 py-2 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 whitespace-nowrap"
+                  >
+                    내일
                   </button>
                 </div>
               </div>

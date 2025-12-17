@@ -205,10 +205,17 @@ export default function WarehouseMovement() {
       const firstCell = row[0];
       const productCode = row[3];
       const productName = row[4];
+      const normalLocation = row[10];
 
       // 첫 번째 열이 0이고 상품 정보가 없으면 합계 행으로 간주
       if ((firstCell === 0 || firstCell === '0') && !productCode && !productName) {
         console.log('합계 행 제외:', row);
+        continue;
+      }
+
+      // 로케이션이 '합계'인 경우도 합계 행으로 간주
+      if (normalLocation && String(normalLocation).trim() === '합계') {
+        console.log('합계 행 제외 (로케이션=합계):', row);
         continue;
       }
 
@@ -242,7 +249,8 @@ export default function WarehouseMovement() {
     const uniqueLocations = new Set();
     details.forEach(item => {
       const location = item.normalLocation || item.normal_location || '';
-      if (location && location.trim()) {
+      // 빈 값이나 '합계' 값은 제외
+      if (location && location.trim() && location.trim() !== '합계') {
         uniqueLocations.add(location.trim());
       }
     });

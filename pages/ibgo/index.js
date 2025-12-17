@@ -1,11 +1,37 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Upload, Copy, Plus, Trash2, ChevronUp, ChevronDown } from 'lucide-react';
+import Handsontable from 'handsontable';
+import { HotTable } from '@handsontable/react';
+import { registerAllModules } from 'handsontable/registry';
+import 'handsontable/dist/handsontable.full.min.css';
+import { Upload, Copy, Plus } from 'lucide-react';
+
+registerAllModules();
+
+// 컬럼 인덱스 상수
+// 0: 상품코드, 1: 상품명, 2: ERP요청순번, 3: 바코드, 4: 예정수량, 5: 남은수량
+// 6: 로케이션, 7: 유통기한, 8: LOT, 9: 수량
+const COL = {
+  PRODUCT_CODE: 0,
+  PRODUCT_NAME: 1,
+  ERP_REQUEST_NO: 2,
+  BARCODE: 3,
+  EXPECTED_QTY: 4,
+  REMAINING_QTY: 5,
+  LOCATION: 6,
+  EXPIRY_DATE: 7,
+  LOT: 8,
+  QUANTITY: 9
+};
+
+// 편집 가능한 컬럼 목록 (Tab 이동용)
+const EDITABLE_COLS = [COL.LOCATION, COL.EXPIRY_DATE, COL.LOT, COL.QUANTITY];
 
 const LocationAssignmentApp = () => {
   const [excelData, setExcelData] = useState([]);
-  const [rows, setRows] = useState([]);
+  const [tableData, setTableData] = useState([]);
   const fileInputRef = useRef(null);
+  const hotRef = useRef(null);
 
   // 엑셀 파일 읽기
   const handleFileUpload = async (e) => {
@@ -17,270 +43,165 @@ const LocationAssignmentApp = () => {
       const workbook = XLSX.read(data, { type: 'array' });
       const sheetName = workbook.SheetNames[0];
       const worksheet = workbook.Sheets[sheetName];
-      
-      // 전체 데이터를 배열로 변환
+
       const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
-      
+
       // 2행을 헤더로 사용 (인덱스 1)
       const headers = jsonData[1];
-      const dataRows = jsonData.slice(2); // 3행부터 데이터
-      
+      const dataRows = jsonData.slice(2);
+
       // 필요한 컬럼 인덱스 찾기
       const columnIndexes = {
         productCode: headers.findIndex(h => h && h.toString().includes('상품코드')),
         productName: headers.findIndex(h => h && h.toString().includes('상품명')),
+        erpRequestNo: headers.findIndex(h => h && h.toString().includes('ERP요청순번')),
         barcode: headers.findIndex(h => h && h.toString().includes('바코드')),
         quantity: headers.findIndex(h => h && h.toString().includes('예정수량'))
       };
-      
+
       // 데이터 파싱
       const parsedData = dataRows
-        .filter(row => row[columnIndexes.productCode]) // 상품코드가 있는 행만
+        .filter(row => row[columnIndexes.productCode])
         .map((row, index) => ({
           id: index + 1,
           productCode: row[columnIndexes.productCode] || '',
           productName: row[columnIndexes.productName] || '',
+          erpRequestNo: row[columnIndexes.erpRequestNo] || '',
           barcode: row[columnIndexes.barcode] || '',
           quantity: parseInt(row[columnIndexes.quantity]) || 0
         }));
-      
+
       setExcelData(parsedData);
-      
-      // 각 상품마다 초기 행 생성
-      const initialRows = parsedData.map(item => ({
-        id: `${item.id}-1`,
-        productId: item.id,
-        productCode: item.productCode,
-        productName: item.productName,
-        barcode: item.barcode,
-        totalQuantity: item.quantity,
-        location: '',
-        quantity: '',
-        expiryDate: '',
-        lot: ''
-      }));
-      
-      setRows(initialRows);
-      
+
+      // Handsontable용 데이터 생성
+      // 순서: 상품코드, 상품명, ERP요청번호, 바코드, 예정수량, 남은수량, 로케이션, 유통기한, LOT, 수량
+      const initialTableData = parsedData.map(item => [
+        item.productCode,    // 0: 상품코드
+        item.productName,    // 1: 상품명
+        item.erpRequestNo,   // 2: ERP요청번호
+        item.barcode,        // 3: 바코드
+        item.quantity,       // 4: 예정수량
+        item.quantity,       // 5: 남은수량 (초기값 = 예정수량)
+        '',                  // 6: 로케이션
+        '',                  // 7: 유통기한
+        '',                  // 8: LOT
+        ''                   // 9: 수량
+      ]);
+
+      setTableData(initialTableData);
+
     } catch (error) {
       console.error('파일 읽기 오류:', error);
       alert('엑셀 파일을 읽는 중 오류가 발생했습니다.');
     }
   };
 
-  // 로케이션 포맷팅 (8자리 -> XX-XX-XX-XX)
+  // 로케이션 포맷팅 (실시간 적용: 2자리마다 - 추가)
   const formatLocation = (value) => {
-    // 숫자와 문자만 남기고 제거
-    const cleaned = value.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    
-    // 8자리로 제한
+    if (!value) return '';
+    const cleaned = value.toString().replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
     const limited = cleaned.slice(0, 8);
-    
-    // 2-2-2-2 형식으로 포맷
-    let formatted = limited;
-    if (limited.length > 2) {
-      formatted = limited.slice(0, 2) + '-' + limited.slice(2);
+
+    // 2자리씩 나눠서 - 로 연결
+    const parts = [];
+    for (let i = 0; i < limited.length; i += 2) {
+      parts.push(limited.slice(i, i + 2));
     }
-    if (limited.length > 4) {
-      formatted = formatted.slice(0, 5) + '-' + limited.slice(4);
+    return parts.join('-');
+  };
+
+  // 유통기한 포맷팅
+  const formatExpiryDate = (value) => {
+    if (!value) return '';
+    const cleaned = value.toString().replace(/[^0-9]/g, '');
+    if (cleaned.length === 8) {
+      return `${cleaned.slice(0, 4)}-${cleaned.slice(4, 6)}-${cleaned.slice(6, 8)}`;
     }
-    if (limited.length > 6) {
-      formatted = formatted.slice(0, 8) + '-' + limited.slice(6);
-    }
-    
-    return formatted;
+    return value;
+  };
+
+  // 남은수량 재계산 (상품코드 + ERP요청번호 조합 기준)
+  const recalculateRemaining = (data) => {
+    // 상품코드+ERP요청번호별 배정수량 합계 계산
+    const assignedByKey = {};
+    data.forEach(row => {
+      const key = `${row[COL.PRODUCT_CODE]}_${row[COL.ERP_REQUEST_NO]}`;
+      const assignedQty = parseInt(row[COL.QUANTITY]) || 0;
+      if (key) {
+        assignedByKey[key] = (assignedByKey[key] || 0) + assignedQty;
+      }
+    });
+
+    // 남은수량 업데이트
+    return data.map(row => {
+      const key = `${row[COL.PRODUCT_CODE]}_${row[COL.ERP_REQUEST_NO]}`;
+      const product = excelData.find(p =>
+        p.productCode === row[COL.PRODUCT_CODE] &&
+        p.erpRequestNo === row[COL.ERP_REQUEST_NO]
+      );
+      if (product) {
+        const assigned = assignedByKey[key] || 0;
+        row[COL.REMAINING_QTY] = product.quantity - assigned;
+      }
+      return row;
+    });
   };
 
   // 행 추가
-  const addRow = (productId) => {
-    const product = excelData.find(p => p.id === productId);
-    if (!product) return;
+  const addRow = () => {
+    if (tableData.length === 0) return;
 
-    const productRows = rows.filter(r => r.productId === productId);
-    const newRowNumber = productRows.length + 1;
-    
-    const newRow = {
-      id: `${productId}-${newRowNumber}`,
-      productId: product.id,
-      productCode: product.productCode,
-      productName: product.productName,
-      barcode: product.barcode,
-      totalQuantity: product.quantity,
-      location: '',
-      quantity: '',
-      expiryDate: '',
-      lot: ''
-    };
+    const hot = hotRef.current?.hotInstance;
+    if (!hot) return;
 
-    // 해당 상품의 마지막 행 다음에 추가
-    const lastIndex = rows.findLastIndex(r => r.productId === productId);
-    const newRows = [...rows];
-    newRows.splice(lastIndex + 1, 0, newRow);
-    setRows(newRows);
-  };
+    const selected = hot.getSelected();
+    let insertIndex = tableData.length;
+    let sourceRow = tableData[tableData.length - 1];
 
-  // 행 삭제
-  const deleteRow = (rowId) => {
-    setRows(rows.filter(row => row.id !== rowId));
-  };
-
-  // 남은 수량 계산
-  const getRemainingQuantity = (productId) => {
-    const product = excelData.find(p => p.id === productId);
-    if (!product) return 0;
-    
-    const assignedQuantity = rows
-      .filter(row => row.productId === productId)
-      .reduce((sum, row) => sum + (parseInt(row.quantity) || 0), 0);
-    
-    return product.quantity - assignedQuantity;
-  };
-
-  // 행 업데이트
-  const updateRow = (rowId, field, value) => {
-    setRows(rows.map(row => {
-      if (row.id === rowId) {
-        if (field === 'location') {
-          // 로케이션은 포맷팅 적용
-          return { ...row, [field]: formatLocation(value) };
-        } else if (field === 'quantity') {
-          const numValue = parseInt(value) || 0;
-          const remainingQuantity = getRemainingQuantity(row.productId);
-          const currentQuantity = parseInt(row.quantity) || 0;
-          const maxAllowed = remainingQuantity + currentQuantity;
-          return { ...row, [field]: Math.min(numValue, maxAllowed).toString() };
-        } else if (field === 'expiryDate') {
-          // 날짜 형식 처리 (YYYYMMDD 입력 시 자동 변환)
-          const cleaned = value.replace(/[^0-9]/g, '');
-          if (cleaned.length === 8) {
-            const year = cleaned.slice(0, 4);
-            const month = cleaned.slice(4, 6);
-            const day = cleaned.slice(6, 8);
-            return { ...row, [field]: `${year}-${month}-${day}` };
-          }
-          return { ...row, [field]: value };
-        }
-        return { ...row, [field]: value };
-      }
-      return row;
-    }));
-  };
-
-  // 행 위/아래 이동
-  const moveRow = (index, direction) => {
-    const newRows = [...rows];
-    const targetIndex = direction === 'up' ? index - 1 : index + 1;
-    
-    if (targetIndex >= 0 && targetIndex < rows.length) {
-      [newRows[index], newRows[targetIndex]] = [newRows[targetIndex], newRows[index]];
-      setRows(newRows);
+    if (selected && selected.length > 0) {
+      const selectedRow = selected[0][0];
+      insertIndex = selectedRow + 1;
+      sourceRow = tableData[selectedRow];
     }
-  };
 
-  // 방향키 네비게이션 처리
-  const handleKeyNavigation = (e, rowIndex, fieldName) => {
-    const fields = ['location', 'quantity', 'expiryDate', 'lot'];
-    const currentFieldIndex = fields.indexOf(fieldName);
-    
-    let nextRowIndex = rowIndex;
-    let nextFieldIndex = currentFieldIndex;
-    
-    switch(e.key) {
-      case 'ArrowUp':
-        e.preventDefault();
-        nextRowIndex = Math.max(0, rowIndex - 1);
-        break;
-      case 'ArrowDown':
-      case 'Enter':
-        e.preventDefault();
-        nextRowIndex = Math.min(rows.length - 1, rowIndex + 1);
-        break;
-      case 'ArrowLeft':
-        if (fieldName === 'quantity') {
-          // 수량 필드에서는 무조건 이전 필드로 이동
-          e.preventDefault();
-          nextFieldIndex = Math.max(0, currentFieldIndex - 1);
-        } else {
-          // 다른 필드에서는 커서가 맨 앞에 있을 때만 이동
-          if (e.target.selectionStart === 0 && e.target.selectionEnd === 0) {
-            e.preventDefault();
-            nextFieldIndex = Math.max(0, currentFieldIndex - 1);
-          }
-        }
-        break;
-      case 'ArrowRight':
-        if (fieldName === 'quantity') {
-          // 수량 필드에서는 무조건 다음 필드로 이동
-          e.preventDefault();
-          nextFieldIndex = Math.min(fields.length - 1, currentFieldIndex + 1);
-        } else {
-          // 다른 필드에서는 커서가 맨 끝에 있을 때만 이동
-          if (e.target.selectionStart === e.target.value.length && 
-              e.target.selectionEnd === e.target.value.length) {
-            e.preventDefault();
-            nextFieldIndex = Math.min(fields.length - 1, currentFieldIndex + 1);
-          }
-        }
-        break;
-      case 'Tab':
-        // Tab은 기본 동작 유지 (Shift+Tab은 역방향)
-        if (!e.shiftKey) {
-          if (currentFieldIndex < fields.length - 1) {
-            e.preventDefault();
-            nextFieldIndex = currentFieldIndex + 1;
-          } else if (rowIndex < rows.length - 1) {
-            e.preventDefault();
-            nextRowIndex = rowIndex + 1;
-            nextFieldIndex = 0;
-          }
-        } else {
-          if (currentFieldIndex > 0) {
-            e.preventDefault();
-            nextFieldIndex = currentFieldIndex - 1;
-          } else if (rowIndex > 0) {
-            e.preventDefault();
-            nextRowIndex = rowIndex - 1;
-            nextFieldIndex = fields.length - 1;
-          }
-        }
-        break;
-      default:
-        return;
-    }
-    
-    // 다음 입력 필드로 포커스 이동
-    if (nextRowIndex !== rowIndex || nextFieldIndex !== currentFieldIndex) {
-      const nextField = fields[nextFieldIndex];
-      const nextInput = document.querySelector(
-        `input[data-row="${nextRowIndex}"][data-field="${nextField}"]`
-      );
-      if (nextInput) {
-        nextInput.focus();
-        nextInput.select();
-      }
-    }
+    // 선택된 행의 상품 정보로 새 행 생성
+    const newRow = [
+      sourceRow[COL.PRODUCT_CODE],    // 상품코드
+      sourceRow[COL.PRODUCT_NAME],    // 상품명
+      sourceRow[COL.ERP_REQUEST_NO],  // ERP요청번호
+      sourceRow[COL.BARCODE],         // 바코드
+      sourceRow[COL.EXPECTED_QTY],    // 예정수량
+      sourceRow[COL.REMAINING_QTY],   // 남은수량
+      '',                              // 로케이션
+      '',                              // 유통기한
+      '',                              // LOT
+      ''                               // 수량
+    ];
+
+    const newData = [...tableData];
+    newData.splice(insertIndex, 0, newRow);
+    setTableData(recalculateRemaining(newData));
   };
 
   // 클립보드 복사용 데이터 생성
+  // 순서: 바코드, ERP요청번호, 정상다중로케이션, 유통기한, LOT, 정상수량
   const generateClipboardData = () => {
-    const validRows = rows.filter(row => row.location && row.quantity);
-    
+    const validRows = tableData.filter(row => row[COL.LOCATION] && row[COL.QUANTITY]); // 로케이션과 수량이 있는 행
+
     if (validRows.length === 0) {
       alert('복사할 데이터가 없습니다. 로케이션과 수량을 입력해주세요.');
       return '';
     }
-    
+
     const clipboardRows = validRows.map(row => [
-      row.barcode,
-      '', // 박스번호 (빈값)
-      row.location, // 정상다중로케이션 - 실제 입력한 로케이션
-      '', // 불량다중로케이션 (빈값)
-      row.expiryDate || '',
-      row.lot || '',
-      row.quantity,
-      0 // 불량수량 (고정값 0)
+      row[COL.BARCODE],              // 바코드
+      row[COL.ERP_REQUEST_NO] || '', // ERP요청번호
+      row[COL.LOCATION],             // 정상다중로케이션
+      row[COL.EXPIRY_DATE] || '',    // 유통기한
+      row[COL.LOT] || '',            // LOT (빈값도 정상)
+      row[COL.QUANTITY]              // 정상수량
     ].join('\t'));
-    
+
     return clipboardRows.join('\n');
   };
 
@@ -288,7 +209,7 @@ const LocationAssignmentApp = () => {
   const copyToClipboard = () => {
     const data = generateClipboardData();
     if (!data) return;
-    
+
     navigator.clipboard.writeText(data).then(() => {
       alert('클립보드에 복사되었습니다.');
     }).catch(err => {
@@ -297,30 +218,152 @@ const LocationAssignmentApp = () => {
     });
   };
 
-  // 제품별 통계 계산
-  const getProductStats = () => {
-    const stats = {};
-    excelData.forEach(product => {
-      const assignedQuantity = rows
-        .filter(row => row.productId === product.id)
-        .reduce((sum, row) => sum + (parseInt(row.quantity) || 0), 0);
-      
-      stats[product.id] = {
-        total: product.quantity,
-        assigned: assignedQuantity,
-        remaining: product.quantity - assignedQuantity
-      };
+  // Handsontable 컬럼 설정
+  const columns = [
+    { data: COL.PRODUCT_CODE, title: '상품코드', width: 120, readOnly: true },
+    { data: COL.PRODUCT_NAME, title: '상품명', width: 200, readOnly: true },
+    { data: COL.ERP_REQUEST_NO, title: 'ERP요청순번', width: 110, readOnly: true },
+    { data: COL.BARCODE, title: '바코드', width: 130, readOnly: true },
+    { data: COL.EXPECTED_QTY, title: '예정수량', width: 80, readOnly: true, type: 'numeric', className: 'htCenter' },
+    { data: COL.REMAINING_QTY, title: '남은수량', width: 80, readOnly: true, type: 'numeric', className: 'htCenter' },
+    { data: COL.LOCATION, title: '로케이션', width: 110 },
+    { data: COL.EXPIRY_DATE, title: '유통기한', width: 110 },
+    { data: COL.LOT, title: 'LOT', width: 100 },
+    { data: COL.QUANTITY, title: '수량', width: 70, type: 'numeric', className: 'htCenter' }
+  ];
+
+  // 중복 로케이션 찾기
+  const getDuplicateLocations = () => {
+    const locationCount = {};
+    tableData.forEach(row => {
+      const loc = row[COL.LOCATION];
+      if (loc && loc.trim()) {
+        locationCount[loc] = (locationCount[loc] || 0) + 1;
+      }
     });
-    return stats;
+    // 2번 이상 나타나는 로케이션만 반환
+    return Object.keys(locationCount).filter(loc => locationCount[loc] > 1);
   };
 
-  const productStats = getProductStats();
+  const duplicateLocations = getDuplicateLocations();
+
+  // 셀 스타일링
+  function cellRenderer(instance, td, row, col, prop, value, cellProperties) {
+    // 기본 렌더러 호출
+    if (cellProperties.type === 'numeric') {
+      Handsontable.renderers.NumericRenderer.apply(this, arguments);
+    } else {
+      Handsontable.renderers.TextRenderer.apply(this, arguments);
+    }
+
+    // 남은수량 컬럼 스타일링
+    if (col === COL.REMAINING_QTY) {
+      const remaining = parseInt(value) || 0;
+      if (remaining > 0) {
+        td.style.color = '#dc2626';
+        td.style.fontWeight = 'bold';
+      } else {
+        td.style.color = '#16a34a';
+        td.style.fontWeight = 'bold';
+      }
+    }
+
+    // 로케이션 중복 하이라이트
+    if (col === COL.LOCATION && value && duplicateLocations.includes(value)) {
+      td.style.backgroundColor = '#fef08a'; // 노란색 하이라이트
+      td.style.fontWeight = 'bold';
+    }
+
+    // 읽기 전용 컬럼 배경색
+    if (col <= COL.REMAINING_QTY) {
+      td.style.backgroundColor = '#f9fafb';
+    }
+  }
+
+  // afterChange 핸들러
+  const handleAfterChange = (changes, source) => {
+    if (!changes || source === 'loadData') return;
+
+    const hot = hotRef.current?.hotInstance;
+    if (!hot) return;
+
+    let needsUpdate = false;
+    const newData = [...tableData];
+
+    changes.forEach(([row, prop, oldValue, newValue]) => {
+      const col = typeof prop === 'number' ? prop : parseInt(prop);
+
+      // 로케이션 포맷팅
+      if (col === COL.LOCATION && newValue !== oldValue) {
+        const formatted = formatLocation(newValue);
+        if (formatted !== newValue) {
+          newData[row][COL.LOCATION] = formatted;
+          needsUpdate = true;
+        }
+      }
+
+      // 유통기한 포맷팅
+      if (col === COL.EXPIRY_DATE && newValue !== oldValue) {
+        const formatted = formatExpiryDate(newValue);
+        if (formatted !== newValue) {
+          newData[row][COL.EXPIRY_DATE] = formatted;
+          needsUpdate = true;
+        }
+      }
+
+      // 수량 변경 시 남은수량 재계산
+      if (col === COL.QUANTITY) {
+        needsUpdate = true;
+      }
+    });
+
+    if (needsUpdate) {
+      setTableData(recalculateRemaining(newData));
+    }
+  };
+
+  // 키보드 단축키
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      // Ctrl+Enter: 행 추가
+      if (e.ctrlKey && e.key === 'Enter') {
+        e.preventDefault();
+        addRow();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [tableData, excelData]);
+
+  // 배정 요약 계산 (상품코드 + ERP요청번호 기준)
+  const getSummary = () => {
+    const summary = {};
+    excelData.forEach(product => {
+      const key = `${product.productCode}_${product.erpRequestNo}`;
+      summary[key] = {
+        productCode: product.productCode,
+        erpRequestNo: product.erpRequestNo,
+        total: product.quantity,
+        assigned: 0
+      };
+    });
+
+    tableData.forEach(row => {
+      const key = `${row[COL.PRODUCT_CODE]}_${row[COL.ERP_REQUEST_NO]}`;
+      if (summary[key]) {
+        summary[key].assigned += parseInt(row[COL.QUANTITY]) || 0;
+      }
+    });
+
+    return Object.values(summary);
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-full mx-auto">
-        <h1 className="text-3xl font-bold text-gray-800 mb-8">물류 로케이션 배정 시스템</h1>
-        
+        <h1 className="text-3xl font-bold text-gray-800 mb-8">입고 로케이션 배정</h1>
+
         {/* 파일 업로드 */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
           <div className="flex items-center justify-between">
@@ -336,14 +379,24 @@ const LocationAssignmentApp = () => {
                 <Upload size={20} />
                 파일 선택
               </button>
-              {rows.length > 0 && (
-                <button
-                  onClick={copyToClipboard}
-                  className="flex items-center gap-2 bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors"
-                >
-                  <Copy size={20} />
-                  클립보드 복사
-                </button>
+              {tableData.length > 0 && (
+                <>
+                  <button
+                    onClick={addRow}
+                    className="flex items-center gap-2 bg-gray-500 text-white px-4 py-2 rounded-lg hover:bg-gray-600 transition-colors"
+                    title="Ctrl+Enter"
+                  >
+                    <Plus size={20} />
+                    행 추가
+                  </button>
+                  <button
+                    onClick={copyToClipboard}
+                    className="flex items-center gap-2 bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors"
+                  >
+                    <Copy size={20} />
+                    클립보드 복사
+                  </button>
+                </>
               )}
             </div>
             <input
@@ -356,164 +409,119 @@ const LocationAssignmentApp = () => {
           </div>
         </div>
 
-        {/* 작업 테이블 */}
-        {rows.length > 0 && (
+        {/* Handsontable */}
+        {tableData.length > 0 && (
           <div className="bg-white rounded-lg shadow-md p-6">
-            <h2 className="text-xl font-semibold mb-4">로케이션 배정 작업</h2>
-            
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse">
-                <thead>
-                  <tr className="bg-gray-100 border-b-2 border-gray-200">
-                    <th className="text-left p-3 font-semibold text-sm sticky left-0 bg-gray-100">상품코드</th>
-                    <th className="text-left p-3 font-semibold text-sm">상품명</th>
-                    <th className="text-left p-3 font-semibold text-sm">바코드</th>
-                    <th className="text-center p-3 font-semibold text-sm">예정수량</th>
-                    <th className="text-center p-3 font-semibold text-sm">남은수량</th>
-                    <th className="text-left p-3 font-semibold text-sm">로케이션</th>
-                    <th className="text-center p-3 font-semibold text-sm">수량</th>
-                    <th className="text-left p-3 font-semibold text-sm">유통기한</th>
-                    <th className="text-left p-3 font-semibold text-sm">LOT</th>
-                    <th className="text-center p-3 font-semibold text-sm">작업</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row, index) => {
-                    const stats = productStats[row.productId];
-                    const isFirstRow = index === 0 || rows[index - 1].productId !== row.productId;
-                    const isLastRow = index === rows.length - 1 || rows[index + 1].productId !== row.productId;
-                    
-                    return (
-                      <tr key={row.id} className={`border-b hover:bg-gray-50 ${isLastRow ? 'border-b-2 border-gray-300' : ''}`}>
-                        <td className="p-2 sticky left-0 bg-white">{row.productCode}</td>
-                        <td className="p-2">{row.productName}</td>
-                        <td className="p-2">{row.barcode}</td>
-                        <td className="text-center p-2">{row.totalQuantity}</td>
-                        <td className={`text-center p-2 font-semibold ${stats.remaining > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                          {stats.remaining}
-                        </td>
-                        <td className="p-2">
-                          <input
-                            type="text"
-                            value={row.location}
-                            onChange={(e) => updateRow(row.id, 'location', e.target.value)}
-                            onKeyDown={(e) => {
-                              // 백스페이스나 Delete 키 처리
-                              if (e.key === 'Backspace' || e.key === 'Delete') {
-                                const input = e.target;
-                                const start = input.selectionStart;
-                                const end = input.selectionEnd;
-                                
-                                // 선택 영역이 없고 커서 앞이 하이픈인 경우
-                                if (start === end && start > 0 && row.location[start - 1] === '-') {
-                                  e.preventDefault();
-                                  // 하이픈과 그 앞 문자를 함께 삭제
-                                  const newValue = row.location.slice(0, start - 2) + row.location.slice(start);
-                                  updateRow(row.id, 'location', newValue);
-                                  
-                                  // 커서 위치 조정
-                                  setTimeout(() => {
-                                    input.selectionStart = input.selectionEnd = start - 2;
-                                  }, 0);
-                                  return;
-                                }
-                              }
-                              handleKeyNavigation(e, index, 'location');
-                            }}
-                            data-row={index}
-                            data-field="location"
-                            placeholder="예: BB121212"
-                            className="w-full px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                            maxLength={11}
-                          />
-                        </td>
-                        <td className="p-2">
-                          <input
-                            type="number"
-                            value={row.quantity}
-                            onChange={(e) => updateRow(row.id, 'quantity', e.target.value)}
-                            onKeyDown={(e) => handleKeyNavigation(e, index, 'quantity')}
-                            data-row={index}
-                            data-field="quantity"
-                            className="w-full px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500 text-center"
-                            min="0"
-                          />
-                        </td>
-                        <td className="p-2">
-                          <input
-                            type="text"
-                            value={row.expiryDate}
-                            onChange={(e) => updateRow(row.id, 'expiryDate', e.target.value)}
-                            onKeyDown={(e) => handleKeyNavigation(e, index, 'expiryDate')}
-                            data-row={index}
-                            data-field="expiryDate"
-                            placeholder="YYYYMMDD 또는 YYYY-MM-DD"
-                            className="w-full px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        </td>
-                        <td className="p-2">
-                          <input
-                            type="text"
-                            value={row.lot}
-                            onChange={(e) => updateRow(row.id, 'lot', e.target.value)}
-                            onKeyDown={(e) => handleKeyNavigation(e, index, 'lot')}
-                            data-row={index}
-                            data-field="lot"
-                            className="w-full px-2 py-1 border rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          />
-                        </td>
-                        <td className="p-2">
-                          <div className="flex items-center justify-center gap-1">
-                            <button
-                              onClick={() => moveRow(index, 'up')}
-                              disabled={index === 0}
-                              className="p-1 text-gray-600 hover:text-blue-600 disabled:text-gray-300"
-                              title="위로 이동"
-                            >
-                              <ChevronUp size={16} />
-                            </button>
-                            <button
-                              onClick={() => moveRow(index, 'down')}
-                              disabled={index === rows.length - 1}
-                              className="p-1 text-gray-600 hover:text-blue-600 disabled:text-gray-300"
-                              title="아래로 이동"
-                            >
-                              <ChevronDown size={16} />
-                            </button>
-                            <button
-                              onClick={() => addRow(row.productId)}
-                              className="p-1 text-green-600 hover:text-green-700"
-                              title="행 추가"
-                            >
-                              <Plus size={16} />
-                            </button>
-                            <button
-                              onClick={() => deleteRow(row.id)}
-                              className="p-1 text-red-600 hover:text-red-700"
-                              title="행 삭제"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="mb-4 flex justify-between items-center">
+              <h2 className="text-xl font-semibold">로케이션 배정 작업</h2>
+              <span className="text-sm text-gray-500">
+                Ctrl+Enter: 행 추가 | 엑셀처럼 편집 가능
+              </span>
             </div>
+
+            <HotTable
+              ref={hotRef}
+              data={tableData}
+              columns={columns}
+              colHeaders={true}
+              rowHeaders={true}
+              width="100%"
+              height={600}
+              licenseKey="non-commercial-and-evaluation"
+              stretchH="all"
+              afterChange={handleAfterChange}
+              cells={(row, col) => {
+                return { renderer: cellRenderer };
+              }}
+              contextMenu={['row_above', 'row_below', 'remove_row', '---------', 'copy', 'cut']}
+              manualRowMove={true}
+              allowRemoveRow={true}
+              allowInsertRow={true}
+              enterMoves={{ row: 1, col: 0 }}
+              tabMoves={{ row: 0, col: 1 }}
+              autoWrapRow={true}
+              autoWrapCol={true}
+              beforeKeyDown={(e) => {
+                const hot = hotRef.current?.hotInstance;
+                if (!hot) return;
+
+                const selected = hot.getSelected();
+                if (!selected || selected.length === 0) return;
+
+                const [row, col] = selected[0];
+                const isLastRow = row === tableData.length - 1;
+
+                // Tab 키: 편집 가능한 컬럼만 이동
+                if (e.key === 'Tab') {
+                  e.preventDefault();
+                  e.stopImmediatePropagation();
+
+                  const currentEditableIndex = EDITABLE_COLS.indexOf(col);
+
+                  if (e.shiftKey) {
+                    // Shift+Tab: 이전 편집 가능 컬럼으로
+                    if (currentEditableIndex > 0) {
+                      hot.selectCell(row, EDITABLE_COLS[currentEditableIndex - 1]);
+                    } else if (row > 0) {
+                      // 이전 행의 마지막 편집 컬럼으로
+                      hot.selectCell(row - 1, EDITABLE_COLS[EDITABLE_COLS.length - 1]);
+                    }
+                  } else {
+                    // Tab: 다음 편집 가능 컬럼으로
+                    if (currentEditableIndex < EDITABLE_COLS.length - 1) {
+                      hot.selectCell(row, EDITABLE_COLS[currentEditableIndex + 1]);
+                    } else {
+                      // 다음 행의 첫 번째 편집 컬럼으로
+                      const nextRow = row + 1;
+                      if (nextRow < tableData.length) {
+                        hot.selectCell(nextRow, EDITABLE_COLS[0]);
+                      }
+                      // 마지막 행이면 그냥 현재 위치 유지 (새 행 추가 안함)
+                    }
+                  }
+                  return;
+                }
+
+                // 마지막 행에서 Enter 또는 아래 방향키 누르면 새 행 추가
+                if ((e.key === 'Enter' || e.key === 'ArrowDown') && isLastRow) {
+                  e.preventDefault();
+                  e.stopImmediatePropagation();
+                  addRow();
+
+                  // 새 행의 같은 컬럼으로 포커스 이동
+                  setTimeout(() => {
+                    hot.selectCell(tableData.length, col);
+                  }, 50);
+                }
+              }}
+              beforeChange={(changes, source) => {
+                // 로케이션 실시간 포맷팅
+                if (!changes) return;
+                changes.forEach((change) => {
+                  const [row, prop, oldValue, newValue] = change;
+                  const col = typeof prop === 'number' ? prop : parseInt(prop);
+
+                  if (col === COL.LOCATION && newValue) {
+                    change[3] = formatLocation(newValue);
+                  }
+                  if (col === COL.EXPIRY_DATE && newValue) {
+                    change[3] = formatExpiryDate(newValue);
+                  }
+                });
+              }}
+            />
 
             {/* 요약 정보 */}
             <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-              <h3 className="font-semibold mb-2">배정 요약</h3>
-              <div className="grid grid-cols-4 gap-4 text-sm">
-                {excelData.map(product => {
-                  const stats = productStats[product.id];
+              <h3 className="font-semibold mb-2">배정 요약 (상품코드 + ERP요청번호 기준)</h3>
+              <div className="grid grid-cols-3 gap-4 text-sm">
+                {getSummary().map((item, idx) => {
+                  const remaining = item.total - item.assigned;
                   return (
-                    <div key={product.id} className="flex justify-between">
-                      <span className="text-gray-600">{product.productCode}:</span>
-                      <span className={stats.remaining > 0 ? 'text-red-600 font-semibold' : 'text-green-600 font-semibold'}>
-                        {stats.assigned} / {stats.total} (남은수량: {stats.remaining})
+                    <div key={idx} className="flex justify-between">
+                      <span className="text-gray-600">{item.productCode} ({item.erpRequestNo}):</span>
+                      <span className={remaining > 0 ? 'text-red-600 font-semibold' : 'text-green-600 font-semibold'}>
+                        {item.assigned} / {item.total} (남은: {remaining})
                       </span>
                     </div>
                   );
