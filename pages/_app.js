@@ -9,17 +9,52 @@ const AuthContext = createContext();
 
 // 세션 캐시 (페이지 이동 시 불필요한 API 호출 방지)
 let cachedUser = null;
+let cachedRole = null;
+let cachedUserName = null;
 let sessionChecked = false;
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(cachedUser);
+  const [role, setRole] = useState(cachedRole);
+  const [userName, setUserName] = useState(cachedUserName);
   const [loading, setLoading] = useState(!sessionChecked);
   const router = useRouter();
+
+  // 사용자 role 및 이름 조회
+  const fetchUserProfile = async (userId, email) => {
+    // admin 이메일은 무조건 admin
+    if (email === 'wd1178@naver.com') {
+      return { role: 'admin', name: '관리자' };
+    }
+
+    try {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('role, name')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) {
+        console.error('Profile 조회 오류:', error);
+        return { role: 'field', name: null };
+      }
+
+      return {
+        role: data?.role || 'field',
+        name: data?.name || null
+      };
+    } catch (error) {
+      console.error('Profile 조회 오류:', error);
+      return { role: 'field', name: null };
+    }
+  };
 
   useEffect(() => {
     // 이미 세션 확인이 완료된 경우 스킵
     if (sessionChecked) {
       setUser(cachedUser);
+      setRole(cachedRole);
+      setUserName(cachedUserName);
       setLoading(false);
       return;
     }
@@ -29,13 +64,29 @@ export function AuthProvider({ children }) {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         cachedUser = session?.user ?? null;
+
+        if (cachedUser) {
+          const profile = await fetchUserProfile(cachedUser.id, cachedUser.email);
+          cachedRole = profile.role;
+          cachedUserName = profile.name;
+        } else {
+          cachedRole = null;
+          cachedUserName = null;
+        }
+
         sessionChecked = true;
         setUser(cachedUser);
+        setRole(cachedRole);
+        setUserName(cachedUserName);
       } catch (error) {
         console.error('세션 확인 오류:', error);
         cachedUser = null;
+        cachedRole = null;
+        cachedUserName = null;
         sessionChecked = true;
         setUser(null);
+        setRole(null);
+        setUserName(null);
       } finally {
         setLoading(false);
       }
@@ -47,8 +98,20 @@ export function AuthProvider({ children }) {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (event, session) => {
         cachedUser = session?.user ?? null;
+
+        if (cachedUser) {
+          const profile = await fetchUserProfile(cachedUser.id, cachedUser.email);
+          cachedRole = profile.role;
+          cachedUserName = profile.name;
+        } else {
+          cachedRole = null;
+          cachedUserName = null;
+        }
+
         sessionChecked = true;
         setUser(cachedUser);
+        setRole(cachedRole);
+        setUserName(cachedUserName);
         setLoading(false);
       }
     );
@@ -104,20 +167,36 @@ export function AuthProvider({ children }) {
   const logout = async () => {
     try {
       await supabase.auth.signOut();
+      cachedUser = null;
+      cachedRole = null;
+      cachedUserName = null;
+      sessionChecked = false;
       setUser(null);
+      setRole(null);
+      setUserName(null);
       router.push('/login');
     } catch (error) {
       console.error('로그아웃 오류:', error);
     }
   };
 
+  // role 로딩 중인지 확인 (user는 있는데 role이 아직 null)
+  const roleLoading = loading || (!!user && role === null);
+
   const value = {
     user,
-    loading,
+    role,
+    userName,
+    loading: roleLoading,  // role까지 로드 완료될 때까지 로딩
     login,
     logout,
     signUp,
     isLoggedIn: !!user,
+    isAdmin: role === 'admin',
+    isOffice: role === 'office',
+    isField: role === 'field',
+    isPrism: role === 'prism',
+    canAccessAllPages: role === 'admin' || role === 'office',
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

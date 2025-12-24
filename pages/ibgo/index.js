@@ -97,17 +97,29 @@ const LocationAssignmentApp = () => {
   };
 
   // 로케이션 포맷팅 (실시간 적용: 2자리마다 - 추가)
+  // 8자리 초과 시 포맷팅하지 않고 원본 유지 (오류 표시용)
   const formatLocation = (value) => {
     if (!value) return '';
     const cleaned = value.toString().replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    const limited = cleaned.slice(0, 8);
+
+    // 8자리 초과면 포맷팅하지 않고 원본 반환 (오류로 표시됨)
+    if (cleaned.length > 8) {
+      return cleaned; // 빨간색으로 표시될 예정
+    }
 
     // 2자리씩 나눠서 - 로 연결
     const parts = [];
-    for (let i = 0; i < limited.length; i += 2) {
-      parts.push(limited.slice(i, i + 2));
+    for (let i = 0; i < cleaned.length; i += 2) {
+      parts.push(cleaned.slice(i, i + 2));
     }
     return parts.join('-');
+  };
+
+  // 로케이션 유효성 검사 (XX-XX-XX-XX 형식, 총 8자리)
+  const isValidLocation = (value) => {
+    if (!value) return true; // 빈 값은 허용
+    const cleaned = value.toString().replace(/[^a-zA-Z0-9]/g, '');
+    return cleaned.length <= 8;
   };
 
   // 유통기한 포맷팅
@@ -193,6 +205,14 @@ const LocationAssignmentApp = () => {
       return '';
     }
 
+    // 잘못된 로케이션 체크
+    const invalidRows = validRows.filter(row => !isValidLocation(row[COL.LOCATION]));
+    if (invalidRows.length > 0) {
+      const invalidLocs = invalidRows.map(row => row[COL.LOCATION]).join(', ');
+      alert(`잘못된 로케이션이 있습니다 (8자리 초과):\n${invalidLocs}\n\n수정 후 다시 시도해주세요.`);
+      return '';
+    }
+
     const clipboardRows = validRows.map(row => [
       row[COL.BARCODE],              // 바코드
       row[COL.ERP_REQUEST_NO] || '', // ERP요청번호
@@ -220,16 +240,16 @@ const LocationAssignmentApp = () => {
 
   // Handsontable 컬럼 설정
   const columns = [
-    { data: COL.PRODUCT_CODE, title: '상품코드', width: 120, readOnly: true },
-    { data: COL.PRODUCT_NAME, title: '상품명', width: 200, readOnly: true },
-    { data: COL.ERP_REQUEST_NO, title: 'ERP요청순번', width: 110, readOnly: true },
-    { data: COL.BARCODE, title: '바코드', width: 130, readOnly: true },
-    { data: COL.EXPECTED_QTY, title: '예정수량', width: 80, readOnly: true, type: 'numeric', className: 'htCenter' },
-    { data: COL.REMAINING_QTY, title: '남은수량', width: 80, readOnly: true, type: 'numeric', className: 'htCenter' },
-    { data: COL.LOCATION, title: '로케이션', width: 110 },
-    { data: COL.EXPIRY_DATE, title: '유통기한', width: 110 },
-    { data: COL.LOT, title: 'LOT', width: 100 },
-    { data: COL.QUANTITY, title: '수량', width: 70, type: 'numeric', className: 'htCenter' }
+    { data: COL.PRODUCT_CODE, title: '상품코드', width: 57, readOnly: true },
+    { data: COL.PRODUCT_NAME, title: '상품명', width: 180, readOnly: true },
+    { data: COL.ERP_REQUEST_NO, title: '순번', width: 35, readOnly: true, className: 'htCenter' },
+    { data: COL.BARCODE, title: '바코드', width: 70, readOnly: true, className: 'htCenter' },
+    { data: COL.EXPECTED_QTY, title: '예정', width: 50, readOnly: true, type: 'numeric', className: 'htCenter' },
+    { data: COL.REMAINING_QTY, title: '남은', width: 50, readOnly: true, type: 'numeric', className: 'htCenter' },
+    { data: COL.LOCATION, title: '로케이션', width: 85, className: 'htCenter' },
+    { data: COL.EXPIRY_DATE, title: '유통기한', width: 80, className: 'htCenter' },
+    { data: COL.LOT, title: 'LOT', width: 65, className: 'htCenter' },
+    { data: COL.QUANTITY, title: '수량', width: 45, type: 'numeric', className: 'htCenter' }
   ];
 
   // 중복 로케이션 찾기
@@ -268,8 +288,15 @@ const LocationAssignmentApp = () => {
       }
     }
 
+    // 로케이션 오류 체크 (8자리 초과)
+    if (col === COL.LOCATION && value && !isValidLocation(value)) {
+      td.style.backgroundColor = '#fecaca'; // 빨간색 배경
+      td.style.color = '#dc2626';
+      td.style.fontWeight = 'bold';
+      td.title = '로케이션은 8자리(XX-XX-XX-XX)여야 합니다';
+    }
     // 로케이션 중복 하이라이트
-    if (col === COL.LOCATION && value && duplicateLocations.includes(value)) {
+    else if (col === COL.LOCATION && value && duplicateLocations.includes(value)) {
       td.style.backgroundColor = '#fef08a'; // 노란색 하이라이트
       td.style.fontWeight = 'bold';
     }
@@ -433,15 +460,33 @@ const LocationAssignmentApp = () => {
               cells={(row, col) => {
                 return { renderer: cellRenderer };
               }}
-              contextMenu={['row_above', 'row_below', 'remove_row', '---------', 'copy', 'cut']}
+              contextMenu={{
+                items: {
+                  'row_above': { name: '위에 행 추가' },
+                  'row_below': { name: '아래에 행 추가' },
+                  'remove_row': { name: '행 삭제' },
+                  'sp1': '---------',
+                  'copy': { name: '복사' },
+                  'cut': { name: '잘라내기' }
+                }
+              }}
+              afterRemoveRow={() => {
+                // 행 삭제 후 남은수량 재계산
+                setTimeout(() => {
+                  const hot = hotRef.current?.hotInstance;
+                  if (hot) {
+                    const currentData = hot.getData();
+                    setTableData(recalculateRemaining([...currentData]));
+                  }
+                }, 0);
+              }}
               manualRowMove={true}
               allowRemoveRow={true}
               allowInsertRow={true}
               enterMoves={{ row: 1, col: 0 }}
-              tabMoves={{ row: 0, col: 1 }}
-              autoWrapRow={true}
-              autoWrapCol={true}
-              beforeKeyDown={(e) => {
+              autoWrapRow={false}
+              autoWrapCol={false}
+              beforeKeyDown={function(e) {
                 const hot = hotRef.current?.hotInstance;
                 if (!hot) return;
 
@@ -453,38 +498,51 @@ const LocationAssignmentApp = () => {
 
                 // Tab 키: 편집 가능한 컬럼만 이동
                 if (e.key === 'Tab') {
-                  e.preventDefault();
+                  // Handsontable 이벤트 완전 차단
                   e.stopImmediatePropagation();
 
                   const currentEditableIndex = EDITABLE_COLS.indexOf(col);
+                  let targetRow = row;
+                  let targetCol = col;
 
                   if (e.shiftKey) {
                     // Shift+Tab: 이전 편집 가능 컬럼으로
                     if (currentEditableIndex > 0) {
-                      hot.selectCell(row, EDITABLE_COLS[currentEditableIndex - 1]);
+                      targetCol = EDITABLE_COLS[currentEditableIndex - 1];
                     } else if (row > 0) {
-                      // 이전 행의 마지막 편집 컬럼으로
-                      hot.selectCell(row - 1, EDITABLE_COLS[EDITABLE_COLS.length - 1]);
+                      targetRow = row - 1;
+                      targetCol = EDITABLE_COLS[EDITABLE_COLS.length - 1];
                     }
                   } else {
                     // Tab: 다음 편집 가능 컬럼으로
-                    if (currentEditableIndex < EDITABLE_COLS.length - 1) {
-                      hot.selectCell(row, EDITABLE_COLS[currentEditableIndex + 1]);
-                    } else {
-                      // 다음 행의 첫 번째 편집 컬럼으로
-                      const nextRow = row + 1;
-                      if (nextRow < tableData.length) {
-                        hot.selectCell(nextRow, EDITABLE_COLS[0]);
+                    if (currentEditableIndex >= 0 && currentEditableIndex < EDITABLE_COLS.length - 1) {
+                      targetCol = EDITABLE_COLS[currentEditableIndex + 1];
+                    } else if (currentEditableIndex === EDITABLE_COLS.length - 1) {
+                      // 마지막 편집 컬럼 -> 다음 행 첫 번째 편집 컬럼
+                      if (row + 1 < tableData.length) {
+                        targetRow = row + 1;
+                        targetCol = EDITABLE_COLS[0];
                       }
-                      // 마지막 행이면 그냥 현재 위치 유지 (새 행 추가 안함)
+                    } else {
+                      // 편집 불가 컬럼에서 Tab -> 첫 번째 편집 컬럼으로
+                      targetCol = EDITABLE_COLS[0];
                     }
                   }
-                  return;
+
+                  // 편집 모드 종료 후 이동
+                  if (hot.getActiveEditor()?.isOpened()) {
+                    hot.getActiveEditor().finishEditing(false);
+                  }
+
+                  setTimeout(() => {
+                    hot.selectCell(targetRow, targetCol);
+                  }, 10);
+
+                  return false; // Handsontable 기본 동작 차단
                 }
 
                 // 마지막 행에서 Enter 또는 아래 방향키 누르면 새 행 추가
                 if ((e.key === 'Enter' || e.key === 'ArrowDown') && isLastRow) {
-                  e.preventDefault();
                   e.stopImmediatePropagation();
                   addRow();
 
@@ -492,6 +550,8 @@ const LocationAssignmentApp = () => {
                   setTimeout(() => {
                     hot.selectCell(tableData.length, col);
                   }, 50);
+
+                  return false;
                 }
               }}
               beforeChange={(changes, source) => {

@@ -250,10 +250,13 @@ export default function WarehouseMovement() {
     details.forEach(item => {
       const location = item.normalLocation || item.normal_location || '';
       // 빈 값이나 '합계' 값은 제외
-      if (location && location.trim() && location.trim() !== '합계') {
-        uniqueLocations.add(location.trim());
+      const trimmed = location.trim();
+      if (trimmed && trimmed !== '합계' && trimmed !== '소계') {
+        uniqueLocations.add(trimmed);
       }
     });
+    // 디버깅용 로그 (콘솔에서 확인 가능)
+    console.log('파렛트 계산 - 고유 로케이션 목록:', Array.from(uniqueLocations));
     return uniqueLocations.size;
   };
 

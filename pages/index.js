@@ -8,17 +8,25 @@ import AuthLayout from '@/components/AuthLayout';
 
 export default function Home() {
   const router = useRouter();
-  const { isLoggedIn, loading } = useAuth();
+  const { isLoggedIn, loading, canAccessAllPages, isField, isPrism } = useAuth();
 
   // 로그인되지 않은 경우 로그인 페이지로 리다이렉트
+  // 현장직(field)인 경우 /found로 리다이렉트
+  // 프리즘(prism)인 경우 /prism으로 리다이렉트
   useEffect(() => {
-    if (!loading && !isLoggedIn) {
-      router.push('/login');
+    if (!loading) {
+      if (!isLoggedIn) {
+        router.push('/login');
+      } else if (isField) {
+        router.push('/found');
+      } else if (isPrism) {
+        router.push('/prism');
+      }
     }
-  }, [isLoggedIn, loading, router]);
+  }, [isLoggedIn, loading, isField, isPrism, router]);
 
-  // 로딩 중이거나 로그인되지 않은 경우
-  if (loading || !isLoggedIn) {
+  // 로딩 중이거나 로그인되지 않았거나 현장직/프리즘인 경우
+  if (loading || !isLoggedIn || !canAccessAllPages) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-100">
         <Head>
@@ -36,7 +44,9 @@ export default function Home() {
     { href: '/b2c2', title: 'B2C2', description: '엑셀 데이터 추출', color: 'bg-orange-500' },
     { href: '/find', title: '재고찾기', description: '로케이션 정렬', color: 'bg-teal-500' },
     { href: '/offbeauty', title: '오프뷰티', description: '오프뷰티 택배 운송장 매핑', color: 'bg-rose-500' },
+    { href: '/found', title: '현장보고', description: '실물발견/없음 보고', color: 'bg-amber-500' },
     { href: '/g', title: 'G', description: 'G 페이지', color: 'bg-pink-500' },
+    { href: '/prism', title: '프리즘창고', description: '프리즘창고 입출고 관리', color: 'bg-indigo-500' },
   ];
 
   return (

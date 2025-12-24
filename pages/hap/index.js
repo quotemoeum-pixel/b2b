@@ -96,6 +96,10 @@ const LocationModal = ({ orderItem, locations, originalStockData, pickingHistory
     const hot = hotTableRef.current?.hotInstance;
     if (!hot) return;
 
+    // 현재 정렬 상태 저장
+    const sortPlugin = hot.getPlugin('columnSorting');
+    const currentSortConfig = sortPlugin.getSortConfig();
+
     setModalPickingList(prevList => {
       const updatedList = [...prevList];
 
@@ -140,6 +144,13 @@ const LocationModal = ({ orderItem, locations, originalStockData, pickingHistory
         }
       });
 
+      // 정렬 상태 복원 (상태 업데이트 후)
+      if (currentSortConfig && currentSortConfig.length > 0) {
+        setTimeout(() => {
+          sortPlugin.sort(currentSortConfig);
+        }, 0);
+      }
+
       return updatedList;
     });
   };
@@ -166,25 +177,50 @@ const LocationModal = ({ orderItem, locations, originalStockData, pickingHistory
       return;
     }
 
-    // 정렬 유지를 위해 원본 데이터 직접 변경 (React 상태 업데이트 없이)
-    modalPickingList[rowIndex].pickingQuantity = fillQuantity;
+    // 현재 정렬 상태 저장
+    const sortPlugin = hot.getPlugin('columnSorting');
+    const currentSortConfig = sortPlugin.getSortConfig();
 
-    // Handsontable에서 정렬된 상태로 해당 셀만 업데이트
+    // Handsontable에서 해당 셀만 업데이트 (setDataAtCell -> afterChange -> setModalPickingList 순서로 상태 업데이트)
     const visualRow = hot.toVisualRow(rowIndex);
     const pickingColIndex = hot.propToCol('pickingQuantity');
     hot.setDataAtCell(visualRow, pickingColIndex, fillQuantity, 'fillAll');
+
+    // 정렬 상태 복원
+    if (currentSortConfig && currentSortConfig.length > 0) {
+      setTimeout(() => {
+        sortPlugin.sort(currentSortConfig);
+      }, 0);
+    }
   };
 
   const handleResetAll = () => {
     if (!window.confirm('모든 피킹수량을 초기화하시겠습니까?')) {
       return;
     }
-    
+
+    const hot = hotTableRef.current?.hotInstance;
+
+    // 현재 정렬 상태 저장
+    let currentSortConfig = null;
+    if (hot) {
+      const sortPlugin = hot.getPlugin('columnSorting');
+      currentSortConfig = sortPlugin.getSortConfig();
+    }
+
     const updatedList = modalPickingList.map(item => ({
       ...item,
       pickingQuantity: 0
     }));
     setModalPickingList(updatedList);
+
+    // 정렬 상태 복원
+    if (hot && currentSortConfig && currentSortConfig.length > 0) {
+      setTimeout(() => {
+        const sortPlugin = hot.getPlugin('columnSorting');
+        sortPlugin.sort(currentSortConfig);
+      }, 0);
+    }
   };
 
   const handleClearRow = (uniqueId) => {
@@ -194,13 +230,21 @@ const LocationModal = ({ orderItem, locations, originalStockData, pickingHistory
     const rowIndex = modalPickingList.findIndex(item => item.uniqueId === uniqueId);
     if (rowIndex === -1) return;
 
-    // 정렬 유지를 위해 원본 데이터 직접 변경 (React 상태 업데이트 없이)
-    modalPickingList[rowIndex].pickingQuantity = 0;
+    // 현재 정렬 상태 저장
+    const sortPlugin = hot.getPlugin('columnSorting');
+    const currentSortConfig = sortPlugin.getSortConfig();
 
-    // Handsontable에서 정렬된 상태로 해당 셀만 업데이트
+    // Handsontable에서 해당 셀만 업데이트
     const visualRow = hot.toVisualRow(rowIndex);
     const pickingColIndex = hot.propToCol('pickingQuantity');
     hot.setDataAtCell(visualRow, pickingColIndex, 0, 'clearRow');
+
+    // 정렬 상태 복원
+    if (currentSortConfig && currentSortConfig.length > 0) {
+      setTimeout(() => {
+        sortPlugin.sort(currentSortConfig);
+      }, 0);
+    }
   };
 
   const handleSave = () => {

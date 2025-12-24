@@ -663,7 +663,7 @@ export default function Home() {
 
         // 박스수 계산: 수량 / ea/box (ea/box가 있을 때만)
         if (eaPerBox && product.quantity) {
-          newRow[4] = Math.ceil(product.quantity / eaPerBox); // 박스수 (올림)
+          newRow[4] = Math.round((product.quantity / eaPerBox) * 10) / 10; // 박스수 (소수점 1자리)
         }
 
         newRow[5] = product.quantity; // 수량

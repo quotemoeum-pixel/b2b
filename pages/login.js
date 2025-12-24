@@ -13,7 +13,7 @@ export default function Login() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const router = useRouter();
-  const { login, signUp, isLoggedIn } = useAuth();
+  const { login, signUp, isLoggedIn, role, loading: authLoading } = useAuth();
 
   // 저장된 이메일 불러오기
   useEffect(() => {
@@ -24,10 +24,25 @@ export default function Login() {
     }
   }, []);
 
-  // 이미 로그인되어 있으면 메인 페이지로 리다이렉트
-  if (isLoggedIn) {
-    router.push('/');
-    return null;
+  // 이미 로그인되어 있으면 권한에 따라 리다이렉트
+  useEffect(() => {
+    if (!authLoading && isLoggedIn) {
+      // 현장직은 /found로, 나머지는 홈으로
+      if (role === 'field') {
+        router.push('/found');
+      } else {
+        router.push('/');
+      }
+    }
+  }, [isLoggedIn, role, authLoading, router]);
+
+  // 로딩 중이거나 이미 로그인된 경우
+  if (authLoading || isLoggedIn) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="text-gray-500">로딩 중...</div>
+      </div>
+    );
   }
 
   const handleSubmit = async (e) => {
@@ -48,7 +63,8 @@ export default function Login() {
           if (rememberMe) {
             localStorage.setItem('savedEmail', email);
           }
-          router.push('/');
+          // 신규 가입자는 기본값이 field이므로 /found로 이동
+          router.push('/found');
           return;
         } else {
           setSuccess('회원가입이 완료되었습니다! 로그인해주세요.');
@@ -60,18 +76,18 @@ export default function Login() {
       }
     } else {
       // 로그인
-      const { success, error } = await login(email, password);
+      const { success: loginSuccess, error: loginError } = await login(email, password);
 
-      if (success) {
+      if (loginSuccess) {
         // 로그인 저장 처리
         if (rememberMe) {
           localStorage.setItem('savedEmail', email);
         } else {
           localStorage.removeItem('savedEmail');
         }
-        router.push('/');
+        // 리다이렉트는 useEffect에서 role 확인 후 처리됨
       } else {
-        setError(error);
+        setError(loginError);
       }
     }
 

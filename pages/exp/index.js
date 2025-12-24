@@ -10,6 +10,7 @@ export default function ExpiryMove() {
   const [reportData, setReportData] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [daysThreshold, setDaysThreshold] = useState(0); // 0: 오늘 기준 경과, 양수: N일 이내 남은 것 포함
 
   const readExcelFile = (file) => {
     return new Promise((resolve, reject) => {
@@ -54,15 +55,18 @@ export default function ExpiryMove() {
 
   const getTodayString = () => formatDate(new Date());
 
-  const isExpired = (expiryDate) => {
+  // daysThreshold: 0이면 오늘 기준 경과된 것, N이면 N일 남은 것까지 포함
+  const isExpiredOrNearExpiry = (expiryDate, threshold) => {
     if (!expiryDate) return false;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const expiry = parseExcelDate(expiryDate);
     if (!expiry) return false;
     expiry.setHours(0, 0, 0, 0);
-    const diffDays = (today.getTime() - expiry.getTime()) / (1000 * 60 * 60 * 24);
-    return diffDays >= 1;
+    // 유통기한까지 남은 일수 (음수면 이미 경과)
+    const remainingDays = (expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24);
+    // threshold일 이내면 true (예: threshold=5면 5일 남은 것까지 포함)
+    return remainingDays <= threshold;
   };
 
   const handleProcess = async () => {
@@ -112,7 +116,7 @@ export default function ExpiryMove() {
         const expiryDate = row[expiryIdx];
         const qty = parseFloat(row[qtyIdx]) || 0;
 
-        if (isExpired(expiryDate) && qty > 0) {
+        if (isExpiredOrNearExpiry(expiryDate, daysThreshold) && qty > 0) {
           const parsedExpiry = parseExcelDate(expiryDate);
           expiredItems.push({
             barcode: row[barcodeIdx] ? String(row[barcodeIdx]).trim() : '',
@@ -128,7 +132,10 @@ export default function ExpiryMove() {
       }
 
       if (expiredItems.length === 0) {
-        setError('유통기한 1일 이상 경과된 재고가 없습니다.');
+        const msg = daysThreshold > 0
+          ? `유통기한 ${daysThreshold}일 이내 남은 재고가 없습니다.`
+          : '유통기한 경과된 재고가 없습니다.';
+        setError(msg);
         setLoading(false);
         return;
       }
@@ -269,15 +276,32 @@ export default function ExpiryMove() {
       <div className="max-w-5xl mx-auto p-6">
         <h1 className="text-2xl font-bold mb-4">유통기한 경과 창고이동</h1>
 
-        {/* 파일 업로드 */}
-        <div className="bg-white border rounded p-4 mb-4">
-          <input
-            type="file"
-            accept=".xls,.xlsx"
-            onChange={(e) => setFile(e.target.files[0])}
-            className="text-sm"
-          />
-          {file && <span className="ml-2 text-sm text-green-600">{file.name}</span>}
+        {/* 파일 업로드 & 기준일 설정 */}
+        <div className="bg-white border rounded p-4 mb-4 space-y-3">
+          <div>
+            <input
+              type="file"
+              accept=".xls,.xlsx"
+              onChange={(e) => setFile(e.target.files[0])}
+              className="text-sm"
+            />
+            {file && <span className="ml-2 text-sm text-green-600">{file.name}</span>}
+          </div>
+          <div className="flex items-center gap-2">
+            <label className="text-sm font-medium text-gray-700">기준일:</label>
+            <input
+              type="number"
+              value={daysThreshold}
+              onChange={(e) => setDaysThreshold(parseInt(e.target.value) || 0)}
+              className="w-20 px-2 py-1 border rounded text-center"
+              min="0"
+            />
+            <span className="text-sm text-gray-500">
+              {daysThreshold > 0
+                ? `(${daysThreshold}일 남은 것까지 포함)`
+                : '(오늘 기준 경과된 것만)'}
+            </span>
+          </div>
         </div>
 
         {/* 실행 버튼 */}
